@@ -1,56 +1,28 @@
-<script setup lang="ts">
-import { onMounted } from 'vue';
-import axios from 'axios';
-
-onMounted(async () => {
-  try {
-    await axios.post('http://localhost:8000/api/init/');
-  } catch (error) {
-    console.error('Error initializing data:', error);
-  }
-});
-</script>
-
 <template>
-  <div class="min-h-screen bg-background text-text-primary flex">
-    <!-- Sidebar -->
-    <aside class="w-64 bg-surface p-6 flex flex-col justify-between">
-      <div>
-        <div class="flex items-center gap-4 mb-10">
-          <div class="w-12 h-12 bg-gradient-to-br from-primary to-primary-700 rounded-xl flex items-center justify-center shadow-lg">
-            <span class="text-3xl">🏰</span>
-          </div>
-          <div>
-            <h1 class="text-xl font-bold">Farmer Battle</h1>
-            <p class="text-xs text-text-secondary">alpha v0.1</p>
-          </div>
-        </div>
-        <nav class="flex flex-col gap-4">
-          <router-link to="/" class="flex items-center gap-3 px-4 py-3 text-text-secondary hover:bg-secondary-800 rounded-lg font-medium">
-            <span class="text-xl">🏠</span> Village
-          </router-link>
-          <router-link to="/barracks" class="flex items-center gap-3 px-4 py-3 text-text-secondary hover:bg-secondary-800 rounded-lg font-medium">
-            <span class="text-xl">⚔️</span> Barracks
-          </router-link>
-          <router-link to="/battle" class="flex items-center gap-3 px-4 py-3 text-text-secondary hover:bg-secondary-800 rounded-lg font-medium">
-            <span class="text-xl">⚔️</span> Battle
-          </router-link>
-          <router-link to="/map" class="flex items-center gap-3 px-4 py-3 text-text-secondary hover:bg-secondary-800 rounded-lg font-medium">
-            <span class="text-xl">🗺️</span> Map
-          </router-link>
-          <router-link to="/leaderboard" class="flex items-center gap-3 px-4 py-3 text-text-secondary hover:bg-secondary-800 rounded-lg font-medium">
-            <span class="text-xl">🏆</span> Leaderboard
-          </router-link>
-        </nav>
+  <div class="min-h-screen bg-background text-text-primary flex flex-col">
+    <!-- Felső header (maradhat nálad így is) -->
+    <header
+      class="h-14 flex items-center justify-between px-4 border-b border-secondary/40 bg-surface/80 backdrop-blur"
+    >
+      <div class="flex items-center gap-3">
+        <span class="text-xl">🌾</span>
+        <h1 class="font-semibold">Farmer Battle</h1>
       </div>
-      <div class="text-center text-xs text-text-secondary">
-        <p>&copy; 2025 Farmer Battle</p>
-      </div>
-    </aside>
+      <nav class="text-sm text-text-secondary">
+        <router-link to="/about" class="hover:underline">About</router-link>
+      </nav>
+    </header>
 
-    <!-- Main Content -->
-    <router-view />
-
+    <!-- Tartalom: bal oldalt a Sidebar, mellette a fő tartalom -->
+    <div class="flex flex-1">
+      <SidebarMenu />
+      <main class="flex-1">
+        <router-view />
+      </main>
+    </div>
   </div>
 </template>
 
+<script setup lang="ts">
+import SidebarMenu from "./components/sidebar/SidebarMenu.vue";
+</script>

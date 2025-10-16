@@ -43,3 +43,37 @@
     border: 1px solid rgba(217, 119, 6, 0.2);
   }
 }
+
+@layer utilities {
+  .shadow-neon { box-shadow: 0 6px 24px rgba(245, 158, 11, .25), inset 0 0 12px rgba(245, 158, 11, .18); }
+  .shadow-neon-soft { box-shadow: 0 0 18px rgba(245, 158, 11, .18); }
+
+  .glow-primary { background: radial-gradient(closest-side, rgba(245,158,11,.17), transparent 70%); filter: blur(8px); }
+  .glow-amber   { background: radial-gradient(closest-side, rgba(217,119,6,.14), transparent 70%); filter: blur(10px); }
+
+  .sidebar-scroll { scrollbar-width: thin; scrollbar-color: rgba(163,163,163,.3) transparent; }
+  .sidebar-scroll::-webkit-scrollbar { width: 8px; }
+  .sidebar-scroll::-webkit-scrollbar-thumb { background: rgba(163,163,163,.25); border-radius: 8px; }
+
+  .kbd-badge {
+    font-size: 10px; line-height: 1; padding: 4px 6px; border-radius: 6px;
+    border: 1px solid rgba(217,119,6,.5);
+    background: rgba(217,119,6,.15);
+  }
+
+  /* shimmer overlay */
+  .shimmer {
+    background: linear-gradient(110deg, transparent 0%, rgba(255,255,255,.05) 15%, transparent 30%);
+    animation: shimmer-move 2.4s infinite linear;
+  }
+  @keyframes shimmer-move {
+    0% { transform: translateX(-40%); }
+    100% { transform: translateX(120%); }
+  }
+
+  /* XP progress anim */
+  .xp-bar { width: 65%; animation: xp-grow 1.2s ease-out; }
+  @keyframes xp-grow { from { width: 0%; } to { width: 65%; } }
+}
+
+/* Optional glass look already present via .glass-effect; kept consistent */
