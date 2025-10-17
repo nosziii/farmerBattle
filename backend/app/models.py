@@ -1,9 +1,10 @@
 from pydantic import BaseModel, ConfigDict
-from typing import List, Optional
+from typing import List, Optional, Literal
 import datetime
 
 class UserBase(BaseModel):
     username: str
+    model_config = ConfigDict(from_attributes=True)
 
 class UserCreate(UserBase):
     password: str
@@ -151,3 +152,28 @@ class BuildingUpgradeResponse(BaseModel):
 
 Village.model_rebuild()
 BuildingUpgrade.model_rebuild()
+
+
+class BarbarianVillage(BaseModel):
+    id: int
+    name: str
+    level: int
+    warriors: int
+    last_growth_at: datetime.datetime
+    last_level_up_at: datetime.datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MapTile(BaseModel):
+    x: int
+    y: int
+    type: Literal["empty", "player", "barbarian"]
+    village: Optional[VillageResponse] = None
+    barbarian: Optional[BarbarianVillage] = None
+
+
+class MapOverview(BaseModel):
+    width: int
+    height: int
+    tiles: List[MapTile]

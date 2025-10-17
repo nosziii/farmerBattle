@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, UniqueConstraint
 from sqlalchemy.orm import relationship
 from .database import Base
 import datetime
@@ -36,6 +36,12 @@ class Village(Base):
     defense_battles = relationship("Battle", foreign_keys="[Battle.defender_id]", back_populates="defender")
     troops = relationship("VillageTroop", back_populates="village")
     building_upgrades = relationship("BuildingUpgradeQueue", back_populates="village")
+    world_tile = relationship(
+        "WorldTile",
+        back_populates="player_village",
+        uselist=False,
+        foreign_keys="WorldTile.player_village_id",
+    )
 
 class Battle(Base):
     __tablename__ = "battles"
@@ -111,3 +117,31 @@ class BuildingUpgradeQueue(Base):
     end_time = Column(DateTime)
 
     village = relationship("Village", back_populates="building_upgrades")
+
+
+class BarbarianVillage(Base):
+    __tablename__ = "barbarian_villages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    level = Column(Integer, default=1)
+    warriors = Column(Integer, default=0)
+    last_growth_at = Column(DateTime, default=datetime.datetime.utcnow)
+    last_level_up_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    tile = relationship("WorldTile", back_populates="barbarian_village", uselist=False)
+
+
+class WorldTile(Base):
+    __tablename__ = "world_tiles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    x = Column(Integer, index=True)
+    y = Column(Integer, index=True)
+    player_village_id = Column(Integer, ForeignKey("villages.id"), nullable=True)
+    barbarian_village_id = Column(Integer, ForeignKey("barbarian_villages.id"), nullable=True)
+
+    player_village = relationship("Village", back_populates="world_tile", foreign_keys=[player_village_id])
+    barbarian_village = relationship("BarbarianVillage", back_populates="tile", uselist=False, foreign_keys=[barbarian_village_id])
+
+    __table_args__ = (UniqueConstraint("x", "y", name="uq_world_tiles_coordinates"),)

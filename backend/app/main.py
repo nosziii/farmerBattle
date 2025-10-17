@@ -85,11 +85,29 @@ async def process_building_queue_task():
     finally:
         db.close()
 
+async def process_barbarian_growth_task():
+    db = SessionLocal()
+    try:
+        while True:
+            updates = crud.process_barbarian_growth(db)
+            if updates:
+                payload = json.dumps(
+                    {
+                        "type": "barbarian_village_updated",
+                        "updates": updates,
+                    }
+                )
+                await websocket.manager.broadcast(payload)
+            await asyncio.sleep(crud.BARBARIAN_GROWTH_TICK_SECONDS)
+    finally:
+        db.close()
+
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(process_training_queue_task())
     asyncio.create_task(process_resource_generation_task())
     asyncio.create_task(process_building_queue_task())
+    asyncio.create_task(process_barbarian_growth_task())
 
 @app.get("/")
 def read_root():

@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session, joinedload, selectinload
+from sqlalchemy import func
 from fastapi import HTTPException
 from . import models, schemas
 import datetime
@@ -11,8 +12,203 @@ from .config.buildings import (
     get_level_definition,
     get_next_level_definition,
 )
+from .config.world import WORLD_CONFIG
 
 RESOURCE_TICK_SECONDS = 5
+BARBARIAN_GROWTH_TICK_SECONDS = 60
+
+
+def _weighted_random_level() -> int:
+    """Pick a barbarian village level using the configured weight distribution."""
+    levels = list(WORLD_CONFIG.barbarian.level_weights.keys())
+    weights = list(WORLD_CONFIG.barbarian.level_weights.values())
+    # normalise weights to guard against misconfiguration that does not sum to 1
+    weight_sum = sum(weights)
+    if weight_sum == 0:
+        return 1
+    normalised = [weight / weight_sum for weight in weights]
+    return random.choices(levels, weights=normalised, k=1)[0]
+
+
+def _initial_warrior_count(level: int) -> int:
+    """Return an initial warrior count for a barbarian village at `level`."""
+    warrior_range = WORLD_CONFIG.barbarian.warrior_ranges.get(level)
+    if warrior_range is None:
+        # fall back to the closest defined level to keep numbers sensible
+        defined_levels = sorted(WORLD_CONFIG.barbarian.warrior_ranges.keys())
+        fallback_level = max((lvl for lvl in defined_levels if lvl <= level), default=defined_levels[0])
+        warrior_range = WORLD_CONFIG.barbarian.warrior_ranges[fallback_level]
+    low, high = warrior_range
+    return random.randint(low, high)
+
+
+def ensure_world_map(db: Session) -> None:
+    """Create the world map grid and initial barbarian villages if none exist yet."""
+    existing_tiles = db.query(func.count(schemas.WorldTile.id)).scalar()
+    if existing_tiles and existing_tiles > 0:
+        return
+
+    width = WORLD_CONFIG.width
+    height = WORLD_CONFIG.height
+    now = datetime.datetime.utcnow()
+
+    tiles: List[schemas.WorldTile] = []
+    for y in range(height):
+        for x in range(width):
+            tile = schemas.WorldTile(x=x, y=y)
+            db.add(tile)
+            tiles.append(tile)
+
+    db.flush()
+
+    # Assign existing player villages to random tiles first so they always occupy the map.
+    available_tiles = tiles.copy()
+    random.shuffle(available_tiles)
+    player_villages = db.query(schemas.Village).all()
+    for village in player_villages:
+        if not available_tiles:
+            break
+        tile = available_tiles.pop()
+        tile.player_village_id = village.id
+
+    # Recompute available tiles once player villages have been placed.
+    available_tiles = [tile for tile in tiles if tile.player_village_id is None]
+    random.shuffle(available_tiles)
+
+    targeted_barbarian_count = int(width * height * WORLD_CONFIG.barbarian.density)
+    targeted_barbarian_count = max(1, min(targeted_barbarian_count, len(available_tiles)))
+
+    for _ in range(targeted_barbarian_count):
+        if not available_tiles:
+            break
+        tile = available_tiles.pop()
+        level = _weighted_random_level()
+        barbarian = schemas.BarbarianVillage(
+            name=f"Barbarian {tile.x}|{tile.y}",
+            level=level,
+            warriors=_initial_warrior_count(level),
+            last_growth_at=now,
+            last_level_up_at=now,
+        )
+        tile.barbarian_village = barbarian
+        db.add(barbarian)
+
+    db.commit()
+
+
+def assign_player_village_to_tile(db: Session, village: schemas.Village) -> None:
+    """Place a newly created village on an empty world tile."""
+    ensure_world_map(db)
+
+    tile = (
+        db.query(schemas.WorldTile)
+        .filter(
+            schemas.WorldTile.player_village_id.is_(None),
+            schemas.WorldTile.barbarian_village_id.is_(None),
+        )
+        .order_by(func.random())
+        .first()
+    )
+
+    if tile is None:
+        raise HTTPException(status_code=409, detail="World map is full. Cannot place new village.")
+
+    tile.player_village_id = village.id
+
+
+def get_world_map(db: Session) -> models.MapOverview:
+    """Return an overview of the current world map."""
+    ensure_world_map(db)
+
+    tiles = (
+        db.query(schemas.WorldTile)
+        .options(
+            selectinload(schemas.WorldTile.player_village).selectinload(schemas.Village.owner),
+            selectinload(schemas.WorldTile.barbarian_village),
+        )
+        .order_by(schemas.WorldTile.y.asc(), schemas.WorldTile.x.asc())
+        .all()
+    )
+
+    map_tiles: List[models.MapTile] = []
+    for tile in tiles:
+        if tile.player_village:
+            village_model = models.VillageResponse.from_orm(tile.player_village)
+            map_tiles.append(
+                models.MapTile(
+                    x=tile.x,
+                    y=tile.y,
+                    type="player",
+                    village=village_model,
+                )
+            )
+        elif tile.barbarian_village:
+            map_tiles.append(
+                models.MapTile(
+                    x=tile.x,
+                    y=tile.y,
+                    type="barbarian",
+                    barbarian=models.BarbarianVillage.from_orm(tile.barbarian_village),
+                )
+            )
+        else:
+            map_tiles.append(models.MapTile(x=tile.x, y=tile.y, type="empty"))
+
+    return models.MapOverview(width=WORLD_CONFIG.width, height=WORLD_CONFIG.height, tiles=map_tiles)
+
+
+def process_barbarian_growth(db: Session) -> List[Dict[str, int]]:
+    """Advance barbarian villages over time based on the configured growth rules."""
+    ensure_world_map(db)
+
+    growth_config = WORLD_CONFIG.barbarian.growth
+    now = datetime.datetime.utcnow()
+    updates: List[Dict[str, int]] = []
+
+    villages = db.query(schemas.BarbarianVillage).all()
+    if not villages:
+        return updates
+
+    for village in villages:
+        updated = False
+
+        # Warrior growth tick
+        minutes_since_growth = (now - village.last_growth_at).total_seconds() / 60
+        if minutes_since_growth >= growth_config.growth_interval_minutes:
+            ticks = int(minutes_since_growth // growth_config.growth_interval_minutes)
+            if ticks > 0:
+                warriors_to_add = ticks * (
+                    growth_config.warriors_per_growth_base
+                    + growth_config.warriors_per_growth_per_level * village.level
+                )
+                village.warriors += warriors_to_add
+                village.last_growth_at = now
+                updated = True
+
+        # Level-up tick
+        minutes_since_level_up = (now - village.last_level_up_at).total_seconds() / 60
+        if minutes_since_level_up >= growth_config.level_up_interval_minutes and village.level < growth_config.max_level:
+            level_ticks = int(minutes_since_level_up // growth_config.level_up_interval_minutes)
+            level_ticks = min(level_ticks, growth_config.max_level - village.level)
+            if level_ticks > 0:
+                village.level += level_ticks
+                village.warriors += growth_config.warriors_per_level_up * level_ticks
+                village.last_level_up_at = now
+                updated = True
+
+        if updated:
+            updates.append(
+                {
+                    "barbarian_village_id": village.id,
+                    "level": village.level,
+                    "warriors": village.warriors,
+                }
+            )
+
+    if updates:
+        db.commit()
+
+    return updates
 
 def calculate_resource_capacities(village: schemas.Village) -> Dict[str, float]:
     capacities: Dict[str, float] = {}
@@ -101,6 +297,9 @@ def create_village(db: Session, village: models.VillageCreate):
         user_id=1 # I will need to fix this later
     )
     db.add(db_village)
+    db.commit()
+    db.refresh(db_village)
+    assign_player_village_to_tile(db, db_village)
     db.commit()
     db.refresh(db_village)
     return db_village
@@ -384,6 +583,9 @@ def create_village(db: Session, village: models.VillageCreate):
     db.add(db_village)
     db.commit()
     db.refresh(db_village)
+    assign_player_village_to_tile(db, db_village)
+    db.commit()
+    db.refresh(db_village)
     return db_village
 
 def upgrade_building(db: Session, village_id: int, building: str):
@@ -568,14 +770,18 @@ def get_villages_by_user_id(db: Session, user_id: int):
     return db.query(schemas.Village).filter(schemas.Village.user_id == user_id).all()
 
 def create_village(db: Session, village: models.VillageCreate):
+    wood_level = get_level_definition("wood_mill", 1)
+    clay_level = get_level_definition("clay_pit", 1)
+    iron_level = get_level_definition("iron_mine", 1)
+
     db_village = schemas.Village(
         name=village.name,
         wood=500,
         clay=500,
         iron=500,
-        wood_production=10,
-        clay_production=10,
-        iron_production=10,
+        wood_production=wood_level["production"],
+        clay_production=clay_level["production"],
+        iron_production=iron_level["production"],
         last_updated=datetime.datetime.utcnow(),
         wood_mill_level=1,
         clay_pit_level=1,
@@ -584,6 +790,9 @@ def create_village(db: Session, village: models.VillageCreate):
         user_id=1 # I will need to fix this later
     )
     db.add(db_village)
+    db.commit()
+    db.refresh(db_village)
+    assign_player_village_to_tile(db, db_village)
     db.commit()
     db.refresh(db_village)
     return db_village

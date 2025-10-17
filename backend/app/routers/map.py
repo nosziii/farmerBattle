@@ -15,7 +15,6 @@ def get_db():
         db.close()
 
 
-@router.get("/map/", response_model=list[models.VillageResponse])
+@router.get("/map/", response_model=models.MapOverview)
 def read_map(db: Session = Depends(get_db)):
-    map_data = crud.get_villages(db)
-    return map_data
+    return crud.get_world_map(db)
