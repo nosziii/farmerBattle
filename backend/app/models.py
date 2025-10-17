@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import List, Optional
 import datetime
 
@@ -11,9 +11,7 @@ class UserCreate(UserBase):
 class User(UserBase):
     id: int
     is_active: bool
-
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 class VillageBase(BaseModel):
     name: str
@@ -35,9 +33,8 @@ class Village(VillageBase):
     clay_pit_level: int
     iron_mine_level: int
     owner: User
-
-    class Config:
-        orm_mode = True
+    building_upgrades: List["BuildingUpgrade"] = []
+    model_config = ConfigDict(from_attributes=True)
 
 class VillageResponse(Village):
     owner: UserBase
@@ -52,9 +49,7 @@ class BattleLogCreate(BattleLogBase):
 class BattleLog(BattleLogBase):
     id: int
     battle_id: int
-
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 class BattleBase(BaseModel):
     attacker_id: int
@@ -68,9 +63,12 @@ class Battle(BattleBase):
     id: int
     timestamp: datetime.datetime
     logs: List[BattleLog] = []
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        orm_mode = True
+class ResourceBalances(BaseModel):
+    wood: float
+    clay: float
+    iron: float
 
 class TroopBase(BaseModel):
     name: str
@@ -88,9 +86,7 @@ class TroopCreate(TroopBase):
 
 class Troop(TroopBase):
     id: int
-
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 class VillageTroopBase(BaseModel):
     troop_id: int
@@ -103,9 +99,7 @@ class VillageTroop(VillageTroopBase):
     id: int
     village_id: int
     troop: Troop
-
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 class TrainingQueueBase(BaseModel):
     village_id: int
@@ -120,8 +114,40 @@ class TrainingQueueCreate(TrainingQueueBase):
 class TrainingQueue(TrainingQueueBase):
     id: int
     troop: Troop
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        orm_mode = True
+class BuildingUpgradeBase(BaseModel):
+    village_id: int
+    building: str
+    target_level: int
+    start_time: datetime.datetime
+    end_time: datetime.datetime
 
-User.update_forward_refs()
+class BuildingUpgrade(BuildingUpgradeBase):
+    id: int
+    model_config = ConfigDict(from_attributes=True)
+
+class BuildingCost(BaseModel):
+    wood: int
+    clay: int
+    iron: int
+
+class BuildingStatus(BaseModel):
+    name: str
+    internal_name: str
+    level: int
+    max_level: int
+    is_upgrading: bool
+    production: float
+    storage: Optional[float]
+    next_cost: Optional[BuildingCost]
+    upgrade_duration: Optional[int]
+    upgrade_end_time: Optional[datetime.datetime]
+
+class BuildingUpgradeResponse(BaseModel):
+    message: str
+    resources: ResourceBalances
+    queue: List[BuildingUpgrade]
+
+Village.model_rebuild()
+BuildingUpgrade.model_rebuild()

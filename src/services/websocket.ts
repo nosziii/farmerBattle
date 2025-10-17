@@ -1,38 +1,73 @@
 import { ref } from 'vue';
 
 const socket = ref<WebSocket | null>(null);
+const listeners = new Set<(event: MessageEvent) => void>();
+let currentClientId: string | null = null;
 
 export const useWebSocket = () => {
   const connect = (clientId: string) => {
-    socket.value = new WebSocket(`ws://localhost:8000/ws/${clientId}`);
+    if (
+      socket.value &&
+      (socket.value.readyState === WebSocket.OPEN || socket.value.readyState === WebSocket.CONNECTING) &&
+      currentClientId === clientId
+    ) {
+      return;
+    }
 
-    socket.value.onopen = () => {
+    if (socket.value) {
+      socket.value.close();
+    }
+
+    currentClientId = clientId;
+    const ws = new WebSocket(`ws://localhost:8000/ws/${clientId}`);
+    socket.value = ws;
+
+    ws.onopen = () => {
       console.log('WebSocket connected');
     };
 
-    socket.value.onclose = () => {
+    ws.onclose = () => {
+      if (socket.value === ws) {
+        socket.value = null;
+        currentClientId = null;
+      }
       console.log('WebSocket disconnected');
     };
 
-    socket.value.onerror = (error) => {
+    ws.onerror = (error) => {
       console.error('WebSocket error:', error);
+    };
+
+    ws.onmessage = (event: MessageEvent) => {
+      listeners.forEach((listener) => {
+        try {
+          listener(event);
+        } catch (err) {
+          console.error('WebSocket listener error:', err);
+        }
+      });
     };
   };
 
   const disconnect = () => {
     if (socket.value) {
       socket.value.close();
+      socket.value = null;
+      currentClientId = null;
     }
   };
 
   const onMessage = (callback: (event: MessageEvent) => void) => {
-    if (socket.value) {
-      socket.value.onmessage = callback;
-    }
+    listeners.add(callback);
+    return () => listeners.delete(callback);
+  };
+
+  const offMessage = (callback: (event: MessageEvent) => void) => {
+    listeners.delete(callback);
   };
 
   const sendMessage = (message: string) => {
-    if (socket.value) {
+    if (socket.value && socket.value.readyState === WebSocket.OPEN) {
       socket.value.send(message);
     }
   };
@@ -41,6 +76,7 @@ export const useWebSocket = () => {
     connect,
     disconnect,
     onMessage,
+    offMessage,
     sendMessage,
   };
 };

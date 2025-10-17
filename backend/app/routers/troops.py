@@ -23,10 +23,14 @@ def read_troops(db: Session = Depends(get_db)):
 
 
 @router.post("/villages/{village_id}/train")
-def train_troops(village_id: int, troops: List[models.VillageTroopCreate], db: Session = Depends(get_db)):
-    return crud.train_troops(db=db, village_id=village_id, troops=troops)
+async def train_troops(village_id: int, troops: List[models.VillageTroopCreate], db: Session = Depends(get_db)):
+    return await crud.train_troops(db=db, village_id=village_id, troops=troops)
 
 @router.get("/villages/{village_id}/training-queue", response_model=List[models.TrainingQueue])
 def read_training_queue(village_id: int, db: Session = Depends(get_db)):
     queue = crud.get_training_queue(db, village_id=village_id)
     return queue
+
+@router.get("/villages/{village_id}/troops", response_model=List[models.VillageTroop])
+def read_village_troops(village_id: int, db: Session = Depends(get_db)):
+    return crud.get_village_troops(db, village_id=village_id)

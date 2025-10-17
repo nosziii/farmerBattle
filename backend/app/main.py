@@ -1,4 +1,5 @@
 import asyncio
+import json
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -39,13 +40,56 @@ app.include_router(websocket.router)
 
 async def process_training_queue_task():
     db = SessionLocal()
-    while True:
-        crud.process_training_queue(db)
-        await asyncio.sleep(1)
+    try:
+        while True:
+            completed_villages = crud.process_training_queue(db)
+            for village_id in completed_villages:
+                await websocket.manager.broadcast(f"village:{village_id}:training_finished")
+            await asyncio.sleep(1)
+    finally:
+        db.close()
+
+async def process_resource_generation_task():
+    db = SessionLocal()
+    try:
+        while True:
+            updates = crud.process_resource_generation(db)
+            for update in updates:
+                payload = {
+                    "type": "resources_updated",
+                    "village_id": update["village_id"],
+                    "resources": update["resources"],
+                    "capacities": update["capacities"],
+                }
+                await websocket.manager.broadcast(json.dumps(payload))
+            await asyncio.sleep(crud.RESOURCE_TICK_SECONDS)
+    finally:
+        db.close()
+
+async def process_building_queue_task():
+    db = SessionLocal()
+    try:
+        while True:
+            updates = crud.process_building_queue(db)
+            for update in updates:
+                payload = json.dumps(
+                    {
+                        "type": "building_upgrade_finished",
+                        "village_id": update["village_id"],
+                        "building": update["building"],
+                        "level": update["level"],
+                    }
+                )
+                await websocket.manager.broadcast(payload)
+            await asyncio.sleep(1)
+    finally:
+        db.close()
 
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(process_training_queue_task())
+    asyncio.create_task(process_resource_generation_task())
+    asyncio.create_task(process_building_queue_task())
 
 @app.get("/")
 def read_root():
