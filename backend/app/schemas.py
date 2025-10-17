@@ -35,6 +35,7 @@ class Village(Base):
     offense_battles = relationship("Battle", foreign_keys="[Battle.attacker_id]", back_populates="attacker")
     defense_battles = relationship("Battle", foreign_keys="[Battle.defender_id]", back_populates="defender")
     troops = relationship("VillageTroop", back_populates="village")
+    building_upgrades = relationship("BuildingUpgradeQueue", back_populates="village")
 
 class Battle(Base):
     __tablename__ = "battles"
@@ -97,3 +98,16 @@ class TrainingQueue(Base):
 
     village = relationship("Village")
     troop = relationship("Troop")
+
+
+class BuildingUpgradeQueue(Base):
+    __tablename__ = "building_upgrade_queue"
+
+    id = Column(Integer, primary_key=True, index=True)
+    village_id = Column(Integer, ForeignKey("villages.id"), index=True)
+    building = Column(String, index=True)
+    target_level = Column(Integer)
+    start_time = Column(DateTime, default=datetime.datetime.utcnow)
+    end_time = Column(DateTime)
+
+    village = relationship("Village", back_populates="building_upgrades")
