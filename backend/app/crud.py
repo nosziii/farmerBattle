@@ -212,13 +212,43 @@ def process_barbarian_growth(db: Session) -> List[Dict[str, int]]:
 
 def calculate_resource_capacities(village: schemas.Village) -> Dict[str, float]:
     capacities: Dict[str, float] = {}
-    for building_key in ("wood_mill", "clay_pit", "iron_mine"):
-        config = get_building_definition(building_key)
-        resource_field = str(config["resource_field"])
-        level = getattr(village, f"{building_key}_level")
+    max_cap = 999_999_999.0
+
+    for building_key, config in BUILDING_CONFIG.items():
+        resource_field = config.get("resource_field")
+        if not resource_field:
+            continue
+        level_field = _building_level_field(building_key)
+        level = getattr(village, level_field)
         level_definition = get_level_definition(building_key, level)
         storage = level_definition.get("storage")
-        capacities[resource_field] = float(storage if storage is not None else 999999999.0)
+        if storage is not None:
+            capacities[resource_field] = float(storage)
+        else:
+            capacities.setdefault(resource_field, max_cap)
+
+    for resource in ("wood", "clay", "iron", "gold"):
+        capacities.setdefault(resource, max_cap)
+
+    warehouse_bonus = 0.0
+    if hasattr(village, "warehouse_level"):
+        warehouse_level = getattr(village, "warehouse_level")
+        try:
+            warehouse_definition = get_level_definition("warehouse", warehouse_level)
+        except KeyError:
+            warehouse_definition = None
+        if warehouse_definition:
+            warehouse_storage = warehouse_definition.get("storage")
+            if warehouse_storage is not None:
+                warehouse_bonus = float(warehouse_storage)
+
+    if warehouse_bonus:
+        for resource in ("wood", "clay", "iron"):
+            capacities[resource] = min(
+                max_cap,
+                capacities.get(resource, max_cap) + warehouse_bonus,
+            )
+
     return capacities
 
 def apply_resource_production(village: schemas.Village, now: Optional[datetime.datetime] = None) -> bool:
@@ -234,6 +264,7 @@ def apply_resource_production(village: schemas.Village, now: Optional[datetime.d
     village.wood = min(village.wood + village.wood_production * time_diff_hours, capacities["wood"])
     village.clay = min(village.clay + village.clay_production * time_diff_hours, capacities["clay"])
     village.iron = min(village.iron + village.iron_production * time_diff_hours, capacities["iron"])
+    village.gold = min(village.gold + village.gold_production * time_diff_hours, capacities["gold"])
     village.last_updated = now
     return True
 
@@ -266,6 +297,7 @@ def process_resource_generation(db: Session) -> List[Dict[str, Dict[str, float]]
                         "wood": village.wood,
                         "clay": village.clay,
                         "iron": village.iron,
+                        "gold": village.gold,
                     },
                     "capacities": capacities,
                 }
@@ -280,19 +312,40 @@ def create_village(db: Session, village: models.VillageCreate):
     wood_level = get_level_definition("wood_mill", 1)
     clay_level = get_level_definition("clay_pit", 1)
     iron_level = get_level_definition("iron_mine", 1)
+    town_hall_level_def = get_level_definition("town_hall", 1)
 
     db_village = schemas.Village(
         name=village.name,
         wood=500,
         clay=500,
         iron=500,
+        gold=0,
         wood_production=wood_level["production"],
         clay_production=clay_level["production"],
         iron_production=iron_level["production"],
+        gold_production=town_hall_level_def["production"],
         last_updated=datetime.datetime.utcnow(),
         wood_mill_level=1,
         clay_pit_level=1,
         iron_mine_level=1,
+        town_hall_level=1,
+        warehouse_level=1,
+        farm_level=1,
+        barracks_level=1,
+        smithy_level=1,
+        training_ground_level=1,
+        stable_level=1,
+        workshop_level=1,
+        forge_level=1,
+        market_level=1,
+        embassy_level=1,
+        library_level=1,
+        academy_level=1,
+        noble_house_level=1,
+        wall_level=1,
+        watchtower_level=1,
+        hospital_level=1,
+        sanctuary_level=1,
         score=100,
         user_id=1 # I will need to fix this later
     )
@@ -1068,7 +1121,7 @@ async def train_troops(db: Session, village_id: int, troops: List[models.Village
     return {
         "message": "Troops are being trained.",
         "queue": get_training_queue(db, village_id),
-        "resources": {"wood": village.wood, "clay": village.clay, "iron": village.iron},
+        "resources": {"wood": village.wood, "clay": village.clay, "iron": village.iron, "gold": village.gold},
         "capacities": capacities,
     }
 
@@ -1145,6 +1198,28 @@ def _normalise_building(building: str) -> str:
 def _building_level_field(building: str) -> str:
     return f"{building}_level"
 
+def _build_requirement_statuses(village: schemas.Village, building_key: str) -> List[models.BuildingRequirementStatus]:
+    config = get_building_definition(building_key)
+    requirement_entries = config.get("requirements", [])
+    statuses: List[models.BuildingRequirementStatus] = []
+
+    for requirement in requirement_entries:
+        required_key = requirement["building"]
+        required_level = requirement["level"]
+        required_definition = get_building_definition(required_key)
+        current_level = getattr(village, _building_level_field(required_key))
+        statuses.append(
+            models.BuildingRequirementStatus(
+                building=required_key,
+                display_name=required_definition["display_name"],
+                required_level=required_level,
+                current_level=current_level,
+                met=current_level >= required_level,
+            )
+        )
+
+    return statuses
+
 def upgrade_building(db: Session, village_id: int, building: str) -> models.BuildingUpgradeResponse:
     building_key = _normalise_building(building)
     village = get_village(db, village_id)
@@ -1154,6 +1229,17 @@ def upgrade_building(db: Session, village_id: int, building: str) -> models.Buil
     definition = get_building_definition(building_key)
     level_field = _building_level_field(building_key)
     current_level = getattr(village, level_field)
+
+    requirement_statuses = _build_requirement_statuses(village, building_key)
+    unmet_requirements = [req for req in requirement_statuses if not req.met]
+    if unmet_requirements:
+        requirement_summary = ", ".join(
+            f"{req.display_name} Lv.{req.required_level}" for req in unmet_requirements
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot upgrade {definition['display_name']}. Missing requirements: {requirement_summary}.",
+        )
 
     next_level = get_next_level_definition(building_key, current_level)
     if not next_level:
@@ -1204,6 +1290,7 @@ def upgrade_building(db: Session, village_id: int, building: str) -> models.Buil
             wood=village.wood,
             clay=village.clay,
             iron=village.iron,
+            gold=village.gold,
         ),
         queue=[models.BuildingUpgrade.from_orm(item) for item in queue],
     )
@@ -1218,12 +1305,18 @@ def get_building_statuses(db: Session, village_id: int) -> List[models.BuildingS
 
     statuses: List[models.BuildingStatus] = []
 
-    for building_key, config in BUILDING_CONFIG.items():
+    ordered_config = sorted(
+        BUILDING_CONFIG.items(), key=lambda entry: entry[1].get("order", 0)
+    )
+
+    for building_key, config in ordered_config:
         level_field = _building_level_field(building_key)
         current_level = getattr(village, level_field)
         current_def = get_level_definition(building_key, current_level)
         next_def = get_next_level_definition(building_key, current_level)
         active_upgrade = queue_lookup.get(building_key)
+        requirement_statuses = _build_requirement_statuses(village, building_key)
+        requirements_met = all(requirement.met for requirement in requirement_statuses)
 
         next_cost = (
             models.BuildingCost(**next_def["cost"])
@@ -1237,14 +1330,23 @@ def get_building_statuses(db: Session, village_id: int) -> List[models.BuildingS
             models.BuildingStatus(
                 name=config["display_name"],
                 internal_name=building_key,
+                category=config.get("category", ""),
+                description=config.get("description", ""),
+                icon=config.get("icon", ""),
                 level=current_level,
                 max_level=config["max_level"],
                 is_upgrading=active_upgrade is not None,
                 production=current_def["production"],
                 storage=current_def["storage"],
+                resource_field=config.get("resource_field"),
                 next_cost=next_cost,
                 upgrade_duration=next_duration,
                 upgrade_end_time=upgrade_end_time,
+                requirements=requirement_statuses,
+                effects=list(config.get("effects", [])),
+                unlocks=list(config.get("unlocks", [])),
+                available=requirements_met and next_def is not None and not active_upgrade,
+                order=int(config.get("order", 0)),
             )
         )
 
@@ -1278,11 +1380,14 @@ def process_building_queue(db: Session) -> List[Dict[str, object]]:
             village.clay_production = level_def["production"]
         elif resource_field == "iron":
             village.iron_production = level_def["production"]
+        elif resource_field == "gold":
+            village.gold_production = level_def["production"]
 
         capacities = calculate_resource_capacities(village)
         village.wood = min(village.wood, capacities["wood"])
         village.clay = min(village.clay, capacities["clay"])
         village.iron = min(village.iron, capacities["iron"])
+        village.gold = min(village.gold, capacities["gold"])
 
         db.delete(item)
         updates.append(
@@ -1297,3 +1402,262 @@ def process_building_queue(db: Session) -> List[Dict[str, object]]:
         db.commit()
 
     return updates
+
+# --------------------------------------------------------------------------- #
+# Admin helpers
+# --------------------------------------------------------------------------- #
+
+ADMIN_BUILDING_KEYS = [
+    "wood_mill",
+    "clay_pit",
+    "iron_mine",
+    "town_hall",
+    "warehouse",
+    "farm",
+    "barracks",
+    "smithy",
+    "training_ground",
+    "stable",
+    "workshop",
+    "forge",
+    "market",
+    "embassy",
+    "library",
+    "academy",
+    "noble_house",
+    "wall",
+    "watchtower",
+    "hospital",
+    "sanctuary",
+]
+
+
+def _build_admin_village_summary(village: schemas.Village) -> models.AdminVillageSummary:
+    owner_name = village.owner.username if village.owner else ""
+    tile = None
+    if village.world_tile:
+        tile = models.MapPosition(x=village.world_tile.x, y=village.world_tile.y)
+    return models.AdminVillageSummary(
+        id=village.id,
+        name=village.name,
+        user_id=village.user_id,
+        user_name=owner_name,
+        resources=models.ResourceBalances(
+            wood=village.wood,
+            clay=village.clay,
+            iron=village.iron,
+            gold=village.gold,
+        ),
+        productions=models.ResourceBalances(
+            wood=village.wood_production,
+            clay=village.clay_production,
+            iron=village.iron_production,
+            gold=village.gold_production,
+        ),
+        tile=tile,
+    )
+
+
+def _build_admin_village_detail(village: schemas.Village) -> models.AdminVillageDetail:
+    summary = _build_admin_village_summary(village)
+    building_levels = {
+        key: getattr(village, f"{key}_level")
+        for key in ADMIN_BUILDING_KEYS
+        if hasattr(village, f"{key}_level")
+    }
+    return models.AdminVillageDetail(
+        **summary.model_dump(),
+        building_levels=building_levels,
+    )
+
+
+def admin_list_users(db: Session) -> List[models.AdminUser]:
+    users = (
+        db.query(schemas.User)
+        .options(selectinload(schemas.User.villages))
+        .order_by(schemas.User.id.asc())
+        .all()
+    )
+    return [
+        models.AdminUser(
+            id=user.id,
+            username=user.username,
+            is_active=user.is_active,
+            village_ids=[village.id for village in user.villages],
+        )
+        for user in users
+    ]
+
+
+def admin_create_user(db: Session, payload: models.AdminUserCreate) -> models.AdminUser:
+    user = create_user(db, models.UserCreate(username=payload.username, password=payload.password))
+    return models.AdminUser(id=user.id, username=user.username, is_active=user.is_active, village_ids=[])
+
+
+def admin_list_villages(db: Session) -> List[models.AdminVillageSummary]:
+    villages = (
+        db.query(schemas.Village)
+        .options(selectinload(schemas.Village.owner), selectinload(schemas.Village.world_tile))
+        .order_by(schemas.Village.id.asc())
+        .all()
+    )
+    return [_build_admin_village_summary(village) for village in villages]
+
+
+def admin_get_village(db: Session, village_id: int) -> models.AdminVillageDetail:
+    village = (
+        db.query(schemas.Village)
+        .options(selectinload(schemas.Village.owner), selectinload(schemas.Village.world_tile))
+        .filter(schemas.Village.id == village_id)
+        .first()
+    )
+    if not village:
+        raise HTTPException(status_code=404, detail="Village not found")
+    return _build_admin_village_detail(village)
+
+
+def admin_update_village(db: Session, village_id: int, payload: models.AdminVillageUpdate) -> models.AdminVillageDetail:
+    village = (
+        db.query(schemas.Village)
+        .options(selectinload(schemas.Village.owner), selectinload(schemas.Village.world_tile))
+        .filter(schemas.Village.id == village_id)
+        .first()
+    )
+    if not village:
+        raise HTTPException(status_code=404, detail="Village not found")
+
+    updated = False
+
+    if payload.name is not None:
+        village.name = payload.name
+        updated = True
+
+    for resource in ("wood", "clay", "iron", "gold"):
+        value = getattr(payload, resource)
+        if value is not None:
+            setattr(village, resource, float(max(0.0, value)))
+            updated = True
+
+    level_updates = {
+        "wood_mill": payload.wood_mill_level,
+        "clay_pit": payload.clay_pit_level,
+        "iron_mine": payload.iron_mine_level,
+        "town_hall": payload.town_hall_level,
+        "warehouse": payload.warehouse_level,
+    }
+    for key, value in level_updates.items():
+        if value is not None:
+            level_attr = f"{key}_level"
+            setattr(village, level_attr, max(1, int(value)))
+            updated = True
+
+    if payload.wood_mill_level is not None:
+        wood_def = get_level_definition("wood_mill", village.wood_mill_level)
+        village.wood_production = wood_def["production"]
+    if payload.clay_pit_level is not None:
+        clay_def = get_level_definition("clay_pit", village.clay_pit_level)
+        village.clay_production = clay_def["production"]
+    if payload.iron_mine_level is not None:
+        iron_def = get_level_definition("iron_mine", village.iron_mine_level)
+        village.iron_production = iron_def["production"]
+    if payload.town_hall_level is not None:
+        town_def = get_level_definition("town_hall", village.town_hall_level)
+        village.gold_production = town_def["production"]
+
+    if updated:
+        db.commit()
+        db.refresh(village)
+
+    return _build_admin_village_detail(village)
+
+
+def admin_create_village(db: Session, payload: models.AdminVillageCreate) -> models.AdminVillageDetail:
+    user = db.query(schemas.User).filter(schemas.User.id == payload.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    wood_level = get_level_definition("wood_mill", 1)
+    clay_level = get_level_definition("clay_pit", 1)
+    iron_level = get_level_definition("iron_mine", 1)
+    town_level = get_level_definition("town_hall", 1)
+
+    village = schemas.Village(
+        name=payload.name,
+        wood=500,
+        clay=500,
+        iron=500,
+        gold=0,
+        wood_production=wood_level["production"],
+        clay_production=clay_level["production"],
+        iron_production=iron_level["production"],
+        gold_production=town_level["production"],
+        last_updated=datetime.datetime.utcnow(),
+        wood_mill_level=1,
+        clay_pit_level=1,
+        iron_mine_level=1,
+        town_hall_level=1,
+        warehouse_level=1,
+        farm_level=1,
+        barracks_level=1,
+        smithy_level=1,
+        training_ground_level=1,
+        stable_level=1,
+        workshop_level=1,
+        forge_level=1,
+        market_level=1,
+        embassy_level=1,
+        library_level=1,
+        academy_level=1,
+        noble_house_level=1,
+        wall_level=1,
+        watchtower_level=1,
+        hospital_level=1,
+        sanctuary_level=1,
+        score=100,
+        user_id=payload.user_id,
+    )
+    db.add(village)
+    db.commit()
+    db.refresh(village)
+    assign_player_village_to_tile(db, village)
+    db.commit()
+    db.refresh(village)
+    return admin_get_village(db, village.id)
+
+
+def admin_assign_village_to_tile(db: Session, village_id: int, x: int, y: int, force: bool = False) -> models.MapPosition:
+    ensure_world_map(db)
+
+    village = db.query(schemas.Village).filter(schemas.Village.id == village_id).first()
+    if not village:
+        raise HTTPException(status_code=404, detail="Village not found")
+
+    tile = (
+        db.query(schemas.WorldTile)
+        .filter(schemas.WorldTile.x == x, schemas.WorldTile.y == y)
+        .first()
+    )
+    if not tile:
+        raise HTTPException(status_code=404, detail="Tile not found")
+
+    if tile.player_village_id and tile.player_village_id != village_id:
+        if not force:
+            raise HTTPException(status_code=409, detail="Tile already occupied by another village")
+        tile.player_village_id = None
+
+    if tile.barbarian_village_id and tile.barbarian_village_id != village_id:
+        if not force:
+            raise HTTPException(status_code=409, detail="Tile occupied by a barbarian village")
+        tile.barbarian_village_id = None
+
+    current_tile = (
+        db.query(schemas.WorldTile)
+        .filter(schemas.WorldTile.player_village_id == village_id)
+        .first()
+    )
+    if current_tile:
+        current_tile.player_village_id = None
+
+    tile.player_village_id = village_id
+    db.commit()
+    return models.MapPosition(x=tile.x, y=tile.y)

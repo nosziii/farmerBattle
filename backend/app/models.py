@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict
 import datetime
 
 class UserBase(BaseModel):
@@ -33,6 +33,26 @@ class Village(VillageBase):
     wood_mill_level: int
     clay_pit_level: int
     iron_mine_level: int
+    town_hall_level: int
+    warehouse_level: int
+    farm_level: int
+    barracks_level: int
+    smithy_level: int
+    training_ground_level: int
+    stable_level: int
+    workshop_level: int
+    forge_level: int
+    market_level: int
+    embassy_level: int
+    library_level: int
+    academy_level: int
+    noble_house_level: int
+    wall_level: int
+    watchtower_level: int
+    hospital_level: int
+    sanctuary_level: int
+    gold: float
+    gold_production: float
     owner: User
     building_upgrades: List["BuildingUpgrade"] = []
     model_config = ConfigDict(from_attributes=True)
@@ -70,6 +90,7 @@ class ResourceBalances(BaseModel):
     wood: float
     clay: float
     iron: float
+    gold: float
 
 class TroopBase(BaseModel):
     name: str
@@ -133,17 +154,36 @@ class BuildingCost(BaseModel):
     clay: int
     iron: int
 
+
+class BuildingRequirementStatus(BaseModel):
+    building: str
+    display_name: str
+    required_level: int
+    current_level: int
+    met: bool
+
+
 class BuildingStatus(BaseModel):
     name: str
     internal_name: str
+    category: str
+    description: str
+    icon: str
     level: int
     max_level: int
     is_upgrading: bool
     production: float
     storage: Optional[float]
+    resource_field: Optional[str]
     next_cost: Optional[BuildingCost]
     upgrade_duration: Optional[int]
     upgrade_end_time: Optional[datetime.datetime]
+    requirements: List[BuildingRequirementStatus]
+    effects: List[str]
+    unlocks: List[str]
+    available: bool
+    order: int
+    model_config = ConfigDict(from_attributes=True)
 
 class BuildingUpgradeResponse(BaseModel):
     message: str
@@ -177,3 +217,59 @@ class MapOverview(BaseModel):
     width: int
     height: int
     tiles: List[MapTile]
+
+
+class AdminUser(BaseModel):
+    id: int
+    username: str
+    is_active: bool
+    village_ids: List[int]
+
+
+class AdminUserCreate(BaseModel):
+    username: str
+    password: str
+
+
+class MapPosition(BaseModel):
+    x: int
+    y: int
+
+
+class AdminVillageSummary(BaseModel):
+    id: int
+    name: str
+    user_id: int
+    user_name: str
+    resources: ResourceBalances
+    productions: ResourceBalances
+    tile: Optional[MapPosition]
+
+
+class AdminVillageDetail(AdminVillageSummary):
+    building_levels: Dict[str, int]
+
+
+class AdminVillageUpdate(BaseModel):
+    name: Optional[str] = None
+    wood: Optional[float] = None
+    clay: Optional[float] = None
+    iron: Optional[float] = None
+    gold: Optional[float] = None
+    wood_mill_level: Optional[int] = None
+    clay_pit_level: Optional[int] = None
+    iron_mine_level: Optional[int] = None
+    town_hall_level: Optional[int] = None
+    warehouse_level: Optional[int] = None
+
+
+class AdminVillageCreate(BaseModel):
+    user_id: int
+    name: str
+
+
+class AdminAssignVillageTile(BaseModel):
+    village_id: int
+    x: int
+    y: int
+    force: bool = False

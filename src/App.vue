@@ -8,8 +8,35 @@
         <span class="text-xl">🌾</span>
         <h1 class="font-semibold">Farmer Battle</h1>
       </div>
-      <nav class="text-sm text-text-secondary">
-        <router-link to="/about" class="hover:underline">About</router-link>
+      <nav class="flex items-center gap-4 text-sm text-text-secondary">
+        <router-link
+          to="/about"
+          class="transition hover:text-text-primary"
+          active-class="text-text-primary font-semibold"
+        >
+          About
+        </router-link>
+        <router-link
+          to="/storage"
+          class="transition hover:text-text-primary"
+          active-class="text-text-primary font-semibold"
+        >
+          Storage
+        </router-link>
+        <router-link
+          to="/info"
+          class="transition hover:text-text-primary"
+          active-class="text-text-primary font-semibold"
+        >
+          Info
+        </router-link>
+        <router-link
+          to="/admin"
+          class="transition hover:text-text-primary"
+          active-class="text-text-primary font-semibold"
+        >
+          Admin
+        </router-link>
       </nav>
     </header>
 

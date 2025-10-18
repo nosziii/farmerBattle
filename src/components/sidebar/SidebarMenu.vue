@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, onMounted, onUnmounted } from "vue";
 import axios from "axios";
 import ResourcePill from "./ResourcePill.vue";
 import ActionBtn from "./ActionBtn.vue";
 import NavGroup from "./NavGroup.vue";
 import NavItem from "./NavItem.vue";
+
+const API_BASE = "http://localhost:8000/api";
 
 /** Compact mód tárolása */
 const isCompact = ref(localStorage.getItem("fb_sidebar_compact") === "1");
@@ -13,12 +15,44 @@ const toggleCompact = () => {
   localStorage.setItem("fb_sidebar_compact", isCompact.value ? "1" : "0");
 };
 
+const resourceSnapshot = ref({
+  gold: 0,
+  wood: 0,
+  clay: 0,
+  iron: 0,
+});
+
+let resourcePoller: number | null = null;
+
+const fetchResourceSnapshot = async () => {
+  try {
+    const { data } = await axios.get(`${API_BASE}/villages/1`);
+    resourceSnapshot.value = {
+      gold: data.gold ?? 0,
+      wood: data.wood ?? 0,
+      clay: data.clay ?? 0,
+      iron: data.iron ?? 0,
+    };
+  } catch (error) {
+    console.error("Error fetching village resources:", error);
+  }
+};
+
 /** A te init hívásod */
 onMounted(async () => {
   try {
-    await axios.post("http://localhost:8000/api/init/");
+    await axios.post(`${API_BASE}/init/`);
   } catch (error) {
     console.error("Error initializing data:", error);
+  }
+  await fetchResourceSnapshot();
+  resourcePoller = window.setInterval(fetchResourceSnapshot, 5000);
+});
+
+onUnmounted(() => {
+  if (resourcePoller !== null) {
+    window.clearInterval(resourcePoller);
+    resourcePoller = null;
   }
 });
 </script>
@@ -104,10 +138,10 @@ onMounted(async () => {
       class="grid gap-2 mb-5"
       :class="isCompact ? 'grid-cols-1' : 'grid-cols-2'"
     >
-      <ResourcePill icon="🪙" label="Gold" :value="4200" />
-      <ResourcePill icon="🪵" label="Wood" :value="1380" />
-      <ResourcePill icon="🪨" label="Stone" :value="910" />
-      <ResourcePill icon="🌾" label="Food" :value="2650" />
+      <ResourcePill icon="🪙" label="Gold" :value="resourceSnapshot.gold" />
+      <ResourcePill icon="🪵" label="Wood" :value="resourceSnapshot.wood" />
+      <ResourcePill icon="🧱" label="Clay" :value="resourceSnapshot.clay" />
+      <ResourcePill icon="⛏️" label="Iron" :value="resourceSnapshot.iron" />
     </div>
 
     <!-- Quick Actions -->

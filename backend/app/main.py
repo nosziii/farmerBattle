@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .database import engine, Base, SessionLocal
-from .routers import village, buildings, leaderboard, map, battle, user, init, troops
+from .routers import village, buildings, leaderboard, map, battle, user, init, troops, admin
 from . import websocket
 from . import crud
 
@@ -36,6 +36,7 @@ app.include_router(battle.router, prefix="/api")
 app.include_router(user.router, prefix="/api")
 app.include_router(init.router, prefix="/api")
 app.include_router(troops.router, prefix="/api")
+app.include_router(admin.router, prefix="/api/admin")
 app.include_router(websocket.router)
 
 async def process_training_queue_task():

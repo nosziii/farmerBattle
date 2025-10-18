@@ -5,11 +5,14 @@ import type { MapTile } from '../types/map';
 const props = defineProps<{
   tile: MapTile;
   selected?: boolean;
+  tileSize?: number;
 }>();
 
 const emit = defineEmits<{
   (e: 'select', tile: MapTile): void;
 }>();
+
+const baseTileSize = computed(() => props.tileSize ?? 64);
 
 const variantClasses = computed(() => {
   if (props.tile.type === 'player' && props.tile.village) {
@@ -24,6 +27,64 @@ const variantClasses = computed(() => {
 const selectionClasses = computed(() =>
   props.selected ? 'shadow-lg shadow-white/20 border-white/70' : ''
 );
+
+const rootStyle = computed(() => {
+  const size = baseTileSize.value;
+  return {
+    padding: `${Math.max(6, Math.round(size * 0.16))}px`,
+    borderRadius: `${Math.max(6, Math.round(size * 0.22))}px`,
+    fontSize: `${Math.max(11, Math.round(size * 0.22))}px`,
+  };
+});
+
+const coordinateStyle = computed(() => {
+  const size = baseTileSize.value;
+  return {
+    fontSize: `${Math.max(9, Math.round(size * 0.18))}px`,
+  };
+});
+
+const contentStyle = computed(() => {
+  const size = baseTileSize.value;
+  const horizontalPadding = Math.max(4, Math.round(size * 0.14));
+  const gap = Math.max(4, Math.round(size * 0.12));
+  return {
+    gap: `${gap}px`,
+    paddingLeft: `${horizontalPadding}px`,
+    paddingRight: `${horizontalPadding}px`,
+  };
+});
+
+const badgeStyle = computed(() => {
+  const size = baseTileSize.value;
+  const verticalPadding = Math.max(2, Math.round(size * 0.08));
+  const horizontalPadding = Math.max(4, Math.round(size * 0.14));
+  return {
+    fontSize: `${Math.max(8, Math.round(size * 0.18))}px`,
+    padding: `${verticalPadding}px ${horizontalPadding}px`,
+    borderRadius: `${Math.max(4, Math.round(size * 0.16))}px`,
+  };
+});
+
+const occupantBadge = computed(() => {
+  if (props.tile.type === 'player') {
+    return '🏰';
+  }
+  if (props.tile.type === 'barbarian') {
+    return '⚔️';
+  }
+  return '·';
+});
+
+const occupantClasses = computed(() => {
+  if (props.tile.type === 'player') {
+    return 'bg-emerald-500/30 border border-emerald-400/40 text-emerald-100';
+  }
+  if (props.tile.type === 'barbarian') {
+    return 'bg-amber-500/20 border border-amber-300/40 text-amber-100';
+  }
+  return 'bg-secondary-800/60 border border-secondary-700/40 text-text-secondary/80';
+});
 
 const badgeText = computed(() => {
   if (props.tile.type === 'player' && props.tile.village) {
@@ -53,35 +114,61 @@ const handleSelect = () => {
 <template>
   <button
     type="button"
-    class="relative aspect-square rounded-md border transition transform hover:scale-[1.03] focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300"
+    class="relative w-full h-full border transition transform hover:scale-[1.03] focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300 flex flex-col shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
     :class="[variantClasses, selectionClasses]"
     :title="tooltip"
     @click="handleSelect"
+    :style="rootStyle"
   >
-    <span class="absolute top-1 left-1 text-[0.65rem] font-mono text-text-secondary">
+    <span
+      class="absolute font-mono text-text-secondary"
+      :style="[{ top: '6px', left: '8px' }, { fontSize: coordinateStyle.fontSize }]"
+    >
       {{ tile.x }}|{{ tile.y }}
     </span>
+    <span
+      class="absolute top-2 right-2 inline-flex h-6 w-6 items-center justify-center rounded-md text-sm backdrop-blur-sm"
+      :class="occupantClasses"
+    >
+      {{ occupantBadge }}
+    </span>
 
-    <div class="flex h-full flex-col items-center justify-center gap-1 px-1 text-center">
+    <div
+      class="flex flex-1 flex-col items-center justify-center text-center"
+      :style="contentStyle"
+    >
       <template v-if="tile.type === 'player' && tile.village">
-        <p class="text-sm font-semibold text-text-primary truncate w-full">{{ tile.village.name }}</p>
-        <p class="text-xs text-text-secondary truncate w-full">{{ tile.village.owner.username }}</p>
-        <p class="text-[0.65rem] text-text-secondary">Score {{ tile.village.score }}</p>
+        <p class="font-semibold text-text-primary truncate w-full">
+          {{ tile.village.name }}
+        </p>
+        <p class="text-text-secondary truncate w-full">
+          {{ tile.village.owner.username }}
+        </p>
+        <p class="text-text-secondary text-[0.8em]">
+          Score {{ tile.village.score }}
+        </p>
       </template>
       <template v-else-if="tile.type === 'barbarian' && tile.barbarian">
-        <p class="text-sm font-semibold text-amber-100 truncate w-full">
+        <p class="font-semibold text-amber-100 truncate w-full">
           {{ tile.barbarian.name }}
         </p>
-        <p class="text-xs text-text-secondary">Level {{ tile.barbarian.level }}</p>
-        <p class="text-[0.65rem] text-text-secondary">{{ tile.barbarian.warriors }} warriors</p>
+        <p class="text-text-secondary">
+          Level {{ tile.barbarian.level }}
+        </p>
+        <p class="text-text-secondary text-[0.8em]">
+          {{ tile.barbarian.warriors }} warriors
+        </p>
       </template>
       <template v-else>
-        <p class="text-xs text-text-secondary italic">Empty</p>
+        <p class="text-text-secondary italic">
+          Empty
+        </p>
       </template>
     </div>
 
     <span
-      class="absolute bottom-1 right-1 rounded-sm px-1 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wide text-text-primary bg-secondary-900/80"
+      class="absolute bottom-1 right-1 font-semibold uppercase tracking-wide text-text-primary bg-secondary-900/80"
+      :style="badgeStyle"
     >
       {{ badgeText }}
     </span>

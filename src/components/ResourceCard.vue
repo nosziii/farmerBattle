@@ -50,6 +50,7 @@ interface Props {
 const props = defineProps<Props>();
 
 const percentage = computed(() => {
-  return Math.min((props.amount / props.capacity) * 100, 100);
+  const capacity = props.capacity && props.capacity > 0 ? props.capacity : 1;
+  return Math.min((props.amount / capacity) * 100, 100);
 });
 </script>

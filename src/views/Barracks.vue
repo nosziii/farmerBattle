@@ -46,6 +46,7 @@ interface ResourceBalances {
   wood: number;
   clay: number;
   iron: number;
+  gold: number;
 }
 
 interface ResourceUpdatePayload {
@@ -55,10 +56,11 @@ interface ResourceUpdatePayload {
   capacities: ResourceBalances;
 }
 
-const RESOURCE_CAPACITY_BASE: ResourceBalances = { wood: 5000, clay: 5000, iron: 5000 };
+const RESOURCE_CAPACITY_BASE: ResourceBalances = { wood: 5000, clay: 5000, iron: 5000, gold: 50 };
 const RESOURCE_CAPACITY_GROWTH = 1.3;
-const computeCapacity = (base: number, level: number) =>
-  base * Math.pow(RESOURCE_CAPACITY_GROWTH, Math.max(level - 1, 0));
+const GOLD_CAPACITY_GROWTH = 1.35;
+const computeCapacity = (base: number, level: number, growth = RESOURCE_CAPACITY_GROWTH) =>
+  base * Math.pow(growth, Math.max(level - 1, 0));
 
 const parseServerDate = (value: string | null | undefined) => {
   if (!value) {
@@ -73,8 +75,13 @@ const troops = ref<Troop[]>([]);
 const trainAmounts = ref<Record<number, number>>({});
 const queue = ref<QueueItem[]>([]);
 const trainedTroops = ref<VillageTroop[]>([]);
-const resources = ref<ResourceBalances>({ wood: 0, clay: 0, iron: 0 });
-const resourceCapacities = ref<ResourceBalances>({ wood: RESOURCE_CAPACITY_BASE.wood, clay: RESOURCE_CAPACITY_BASE.clay, iron: RESOURCE_CAPACITY_BASE.iron });
+const resources = ref<ResourceBalances>({ wood: 0, clay: 0, iron: 0, gold: 0 });
+const resourceCapacities = ref<ResourceBalances>({
+  wood: RESOURCE_CAPACITY_BASE.wood,
+  clay: RESOURCE_CAPACITY_BASE.clay,
+  iron: RESOURCE_CAPACITY_BASE.iron,
+  gold: RESOURCE_CAPACITY_BASE.gold,
+});
 
 const loadingTroops = ref(true);
 const loadingQueue = ref(true);
@@ -138,6 +145,7 @@ const resourceCards = computed(() => [
   { key: 'wood', label: 'Wood', value: resources.value.wood, capacity: resourceCapacities.value.wood },
   { key: 'clay', label: 'Clay', value: resources.value.clay, capacity: resourceCapacities.value.clay },
   { key: 'iron', label: 'Iron', value: resources.value.iron, capacity: resourceCapacities.value.iron },
+  { key: 'gold', label: 'Gold', value: resources.value.gold, capacity: resourceCapacities.value.gold },
 ]);
 
 const formatNumber = (value: number) => numberFormatter.format(Math.max(0, Math.floor(value || 0)));
@@ -247,11 +255,13 @@ const fetchResources = async (showLoader = true) => {
       wood: computeCapacity(RESOURCE_CAPACITY_BASE.wood, data.wood_mill_level ?? 1),
       clay: computeCapacity(RESOURCE_CAPACITY_BASE.clay, data.clay_pit_level ?? 1),
       iron: computeCapacity(RESOURCE_CAPACITY_BASE.iron, data.iron_mine_level ?? 1),
+      gold: computeCapacity(RESOURCE_CAPACITY_BASE.gold, data.town_hall_level ?? 1, GOLD_CAPACITY_GROWTH),
     };
     resources.value = {
       wood: data.wood ?? 0,
       clay: data.clay ?? 0,
       iron: data.iron ?? 0,
+      gold: data.gold ?? 0,
     };
     resourceCapacities.value = capacities;
   } catch (error) {

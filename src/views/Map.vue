@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, computed, watch } from 'vue';
 import axios from 'axios';
 import MapTile from '../components/MapTile.vue';
 import type { MapOverview, MapTile as MapTileSummary } from '../types/map';
@@ -10,11 +10,52 @@ const overview = ref<MapOverview | null>(null);
 const selectedTile = ref<MapTileSummary | null>(null);
 
 const orderedTiles = computed(() => overview.value?.tiles ?? []);
-const gridStyle = computed(() =>
-  overview.value
-    ? { gridTemplateColumns: `repeat(${overview.value.width}, minmax(0, 1fr))` }
-    : {}
-);
+const GRID_GAP_PX = 4;
+const minTileSize = 44;
+const maxTileSize = 128;
+const defaultTileSize = 72;
+const tileSize = ref(defaultTileSize);
+
+const clampTileSize = (value: number) => Math.min(maxTileSize, Math.max(minTileSize, Math.round(value)));
+
+watch(tileSize, (value, oldValue) => {
+  if (value === oldValue) return;
+  tileSize.value = clampTileSize(value);
+});
+
+const gridStyle = computed(() => {
+  if (!overview.value) {
+    return {};
+  }
+  const size = `${tileSize.value}px`;
+  return {
+    gridTemplateColumns: `repeat(${overview.value.width}, ${size})`,
+    gridAutoRows: size,
+  };
+});
+
+const viewportStyle = computed(() => ({
+  height: 'min(70vh, 38rem)',
+  width: 'min(100%, 42rem)',
+  maxWidth: '42rem',
+  maxHeight: '38rem',
+}));
+
+const gridMetrics = computed(() => {
+  if (!overview.value) {
+    return {};
+  }
+  const mapWidth =
+    overview.value.width * tileSize.value +
+    Math.max(overview.value.width - 1, 0) * GRID_GAP_PX;
+  const mapHeight =
+    overview.value.height * tileSize.value +
+    Math.max(overview.value.height - 1, 0) * GRID_GAP_PX;
+  return {
+    width: `${mapWidth}px`,
+    height: `${mapHeight}px`,
+  };
+});
 
 const travelTimeFromOrigin = computed(() => {
   if (!selectedTile.value) {
@@ -25,6 +66,14 @@ const travelTimeFromOrigin = computed(() => {
 
 const selectTile = (tile: MapTileSummary) => {
   selectedTile.value = tile;
+};
+
+const adjustTileSize = (delta: number) => {
+  tileSize.value = clampTileSize(tileSize.value + delta);
+};
+
+const resetTileSize = () => {
+  tileSize.value = defaultTileSize;
 };
 
 const fetchMapData = async () => {
@@ -55,13 +104,57 @@ onMounted(fetchMapData);
           {{ overview.width }} x {{ overview.height }} tiles - each step = 1 minute of travel
         </p>
       </div>
-      <button
-        type="button"
-        class="px-3 py-1.5 rounded-md border border-secondary-700/60 bg-secondary-900/40 text-sm text-text-secondary hover:bg-secondary-800/60 transition"
-        @click="fetchMapData"
-      >
-        Refresh
-      </button>
+      <div class="flex items-center gap-2">
+        <button
+          type="button"
+          class="px-3 py-1.5 rounded-md border border-secondary-700/60 bg-secondary-900/40 text-sm text-text-secondary hover:bg-secondary-800/60 transition"
+          @click="fetchMapData"
+        >
+          Refresh
+        </button>
+      </div>
+    </div>
+    <div
+      v-if="overview"
+      class="flex flex-wrap items-center gap-4 mb-6 text-sm text-text-secondary"
+    >
+      <div class="flex items-center gap-3 rounded-md border border-secondary-700/40 bg-secondary-900/60 px-4 py-2">
+        <span class="uppercase tracking-wide text-[0.65rem] text-text-secondary">Zoom</span>
+        <button
+          type="button"
+          class="h-8 w-8 grid place-items-center rounded-md border border-secondary-700/50 bg-secondary-900/70 text-text-secondary hover:bg-secondary-800/70 transition"
+          @click="adjustTileSize(-8)"
+          title="Zoom out"
+        >
+          –
+        </button>
+        <input
+          v-model.number="tileSize"
+          type="range"
+          :min="minTileSize"
+          :max="maxTileSize"
+          :step="4"
+          class="w-36 accent-emerald-400"
+        />
+        <button
+          type="button"
+          class="h-8 w-8 grid place-items-center rounded-md border border-secondary-700/50 bg-secondary-900/70 text-text-secondary hover:bg-secondary-800/70 transition"
+          @click="adjustTileSize(8)"
+          title="Zoom in"
+        >
+          +
+        </button>
+        <button
+          type="button"
+          class="h-8 px-3 rounded-md border border-secondary-700/50 bg-secondary-900/70 text-text-secondary hover:bg-secondary-800/70 transition"
+          @click="resetTileSize"
+        >
+          Reset
+        </button>
+        <span class="font-mono text-text-primary text-xs">
+          {{ tileSize }} px
+        </span>
+      </div>
     </div>
 
     <div v-if="loading" class="text-center text-text-secondary py-16">
@@ -73,16 +166,25 @@ onMounted(fetchMapData);
     </div>
 
     <div v-else-if="overview" class="flex flex-col lg:flex-row gap-6">
-      <section class="flex-1 space-y-4">
-        <div class="rounded-lg border border-secondary-700/40 bg-secondary-900/30 p-4 overflow-auto">
-          <div class="grid gap-1" :style="gridStyle">
-            <MapTile
-              v-for="tile in orderedTiles"
-              :key="`${tile.x}-${tile.y}`"
-              :tile="tile"
-              :selected="selectedTile?.x === tile.x && selectedTile?.y === tile.y"
-              @select="selectTile"
-            />
+      <section class="flex-1 min-w-0 space-y-4">
+        <div
+          class="relative rounded-2xl border border-secondary-700/40 bg-gradient-to-br from-secondary-900/80 to-secondary-800/60 shadow-lg shadow-black/10 min-h-0"
+        >
+          <div class="absolute inset-x-0 top-0 h-10 rounded-t-2xl bg-secondary-900/60 backdrop-blur pointer-events-none"></div>
+          <div
+            class="relative overflow-x-auto overflow-y-auto rounded-2xl px-4 pb-4 pt-10 w-full min-h-0 max-w-full"
+            :style="viewportStyle"
+          >
+            <div class="grid gap-1" :style="[gridStyle, gridMetrics]">
+              <MapTile
+                v-for="tile in orderedTiles"
+                :key="`${tile.x}-${tile.y}`"
+                :tile="tile"
+                :selected="selectedTile?.x === tile.x && selectedTile?.y === tile.y"
+                :tile-size="tileSize"
+                @select="selectTile"
+              />
+            </div>
           </div>
         </div>
 
