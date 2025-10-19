@@ -19,7 +19,8 @@ services:
       - ./backend/app:/app/app
     environment:
       - DATABASE_URL=postgresql://farmer:battle@db/farmerbattle
-      - ADMIN_TOKEN=changeme
+      - AUTH_SECRET=dev-secret-key
+      - ADMIN_USER=testuser
     depends_on:
       - db
 

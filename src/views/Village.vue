@@ -1,17 +1,22 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from "vue";
+import { ref, onMounted, onUnmounted, computed, watch } from "vue";
 
 import ResourceCard from "../components/ResourceCard.vue";
 import BuildingCard from "../components/BuildingCard.vue";
 import axios from "axios";
 import { useWebSocket } from "../services/websocket";
+import { ensureAuthReady } from "../services/auth";
 import type {
   BuildingStatus,
   BuildingCost,
   BuildingQueueItem,
 } from "../types/buildings";
-
-const API_BASE = "http://localhost:8000/api";
+import {
+  API_BASE,
+  activeVillageId,
+  ensureActiveVillageId,
+  setActiveVillageId,
+} from "../services/villageState";
 
 interface ResourceBalances {
   wood: number;
@@ -100,7 +105,7 @@ const parseServerDate = (value: string | null | undefined) => {
 };
 
 const resources = ref<any[]>([]);
-const villageId = ref(1); // Assuming a fixed village for now
+const villageId = activeVillageId;
 const notifications = ref<any[]>([]);
 const trainedTroops = ref<VillageTroopEntry[]>([]);
 const trainingQueue = ref<TrainingQueueItem[]>([]);
@@ -430,6 +435,9 @@ const applyResourceUpdate = (
 };
 
 const fetchVillageData = async () => {
+  if (!villageId.value) {
+    return;
+  }
   try {
     const response = await axios.get(`${API_BASE}/villages/${villageId.value}`);
     const village = response.data;
@@ -450,7 +458,8 @@ const fetchVillageData = async () => {
         const createResponse = await axios.post(`${API_BASE}/villages/`, {
           name: "My New Village",
         });
-        villageId.value = createResponse.data.id;
+        const newId = createResponse.data.id;
+        setActiveVillageId(newId);
         addNotification("New village created!", "success");
         await fetchVillageData();
       } catch (createError) {
@@ -465,6 +474,9 @@ const fetchVillageData = async () => {
 };
 
 const fetchReadyTroops = async (showLoader = true) => {
+  if (!villageId.value) {
+    return;
+  }
   if (showLoader) {
     loadingTroops.value = true;
   }
@@ -483,6 +495,9 @@ const fetchReadyTroops = async (showLoader = true) => {
 };
 
 const fetchTrainingQueueData = async (showLoader = true) => {
+  if (!villageId.value) {
+    return;
+  }
   if (showLoader) {
     loadingTrainingQueue.value = true;
   }
@@ -508,6 +523,10 @@ const refreshMilitaryData = async (showLoader = true) => {
 };
 
 const handleUpgrade = async (buildingInternalName: string) => {
+  if (!villageId.value) {
+    addNotification("No active village selected.", "error");
+    return;
+  }
   const status = buildingStatuses.value.find(
     (entry) => entry.internal_name === buildingInternalName
   );
@@ -542,11 +561,15 @@ const handleUpgrade = async (buildingInternalName: string) => {
 const { connect, onMessage, offMessage } = useWebSocket();
 
 const handleSocketMessage = (event: MessageEvent) => {
+  const currentId = villageId.value;
+  if (!currentId) {
+    return;
+  }
   const message = event.data;
 
   if (
-    message === `village:${villageId.value}:training_started` ||
-    message === `village:${villageId.value}:training_finished`
+    message === `village:${currentId}:training_started` ||
+    message === `village:${currentId}:training_finished`
   ) {
     fetchVillageData();
     refreshMilitaryData(false);
@@ -559,14 +582,14 @@ const handleSocketMessage = (event: MessageEvent) => {
       | BuildingUpgradeFinishedPayload;
     if (
       payload.type === "resources_updated" &&
-      payload.village_id === villageId.value
+      payload.village_id === currentId
     ) {
       applyResourceUpdate(payload.resources, payload.capacities);
       return;
     }
     if (
       payload.type === "building_upgrade_finished" &&
-      payload.village_id === villageId.value
+      payload.village_id === currentId
     ) {
       fetchVillageData();
     }
@@ -578,6 +601,19 @@ const handleSocketMessage = (event: MessageEvent) => {
 updateResourceCards();
 
 onMounted(async () => {
+  await ensureAuthReady();
+  try {
+    await ensureActiveVillageId();
+  } catch (error) {
+    addNotification("Failed to resolve active village.", "error");
+    console.error("Unable to ensure active village id:", error);
+    return;
+  }
+
+  if (!villageId.value) {
+    return;
+  }
+
   await fetchVillageData();
   await refreshMilitaryData();
 
@@ -593,6 +629,18 @@ onMounted(async () => {
     now.value = Date.now();
   }, 1000);
 });
+
+watch(
+  activeVillageId,
+  async (newId, oldId) => {
+    if (!newId || newId === oldId) {
+      return;
+    }
+    await fetchVillageData();
+    await refreshMilitaryData();
+    connect(newId.toString());
+  }
+);
 
 onUnmounted(() => {
   if (villagePoller !== null) {

@@ -1,11 +1,21 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import axios from 'axios';
 import { useWebSocket } from '../services/websocket';
+import { ensureAuthReady } from '../services/auth';
+import {
+  API_BASE,
+  activeVillageId,
+  ensureActiveVillageId,
+} from '../services/villageState';
+import type { BuildingRequirement } from '../types/buildings';
 
-const API_BASE = 'http://localhost:8000/api';
+interface TroopRequirement {
+  building: string;
+  level: number;
+}
 
-interface Troop {
+interface TroopDefinition {
   id: number;
   name: string;
   attack: number;
@@ -16,6 +26,12 @@ interface Troop {
   clay_cost: number;
   iron_cost: number;
   training_time: number;
+  requirements: TroopRequirement[];
+}
+
+interface AvailableTroop extends TroopDefinition {
+  available: boolean;
+  missing_requirements: BuildingRequirement[];
 }
 
 interface QueueItem {
@@ -25,7 +41,7 @@ interface QueueItem {
   quantity: number;
   start_time: string | null;
   end_time: string;
-  troop: Troop;
+  troop: TroopDefinition;
 }
 
 interface QueueItemWithProgress extends QueueItem {
@@ -39,7 +55,7 @@ interface VillageTroop {
   village_id: number;
   troop_id: number;
   quantity: number;
-  troop: Troop;
+  troop: TroopDefinition;
 }
 
 interface ResourceBalances {
@@ -71,7 +87,7 @@ const parseServerDate = (value: string | null | undefined) => {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
-const troops = ref<Troop[]>([]);
+const troops = ref<AvailableTroop[]>([]);
 const trainAmounts = ref<Record<number, number>>({});
 const queue = ref<QueueItem[]>([]);
 const trainedTroops = ref<VillageTroop[]>([]);
@@ -88,7 +104,7 @@ const loadingQueue = ref(true);
 const loadingTrained = ref(true);
 const loadingResources = ref(true);
 
-const villageId = ref<number | null>(null);
+const villageId = activeVillageId;
 const isSubmitting = ref(false);
 const trainError = ref<string | null>(null);
 const trainErrorDetail = ref<Record<string, unknown> | null>(null);
@@ -101,10 +117,6 @@ let detachSocket: (() => void) | null = null;
 
 const numberFormatter = new Intl.NumberFormat();
 
-const totalSelected = computed(() =>
-  Object.values(trainAmounts.value).reduce((sum, qty) => sum + (typeof qty === 'number' ? qty : 0), 0)
-);
-
 const trainedByTroopId = computed<Record<number, VillageTroop>>(() => {
   const lookup: Record<number, VillageTroop> = {};
   trainedTroops.value.forEach((item) => {
@@ -112,6 +124,24 @@ const trainedByTroopId = computed<Record<number, VillageTroop>>(() => {
   });
   return lookup;
 });
+
+const troopById = computed<Record<number, AvailableTroop>>(() => {
+  const map: Record<number, AvailableTroop> = {};
+  troops.value.forEach((troop) => {
+    map[troop.id] = troop;
+  });
+  return map;
+});
+
+const selectedOrders = computed(() =>
+  Object.entries(trainAmounts.value)
+    .map(([troopId, quantity]) => ({ troop_id: Number(troopId), quantity: Number(quantity) || 0 }))
+    .filter((order) => order.quantity > 0 && troopById.value[order.troop_id]?.available)
+);
+
+const totalSelected = computed(() =>
+  selectedOrders.value.reduce((sum, order) => sum + order.quantity, 0)
+);
 
 const queueWithProgress = computed<QueueItemWithProgress[]>(() =>
   queue.value.map((item) => {
@@ -148,6 +178,37 @@ const resourceCards = computed(() => [
   { key: 'gold', label: 'Gold', value: resources.value.gold, capacity: resourceCapacities.value.gold },
 ]);
 
+const maxTrainable = (troop: AvailableTroop) => {
+  if (!troop.available) return 0;
+  const wood = troop.wood_cost > 0 ? Math.floor(resources.value.wood / troop.wood_cost) : Infinity;
+  const clay = troop.clay_cost > 0 ? Math.floor(resources.value.clay / troop.clay_cost) : Infinity;
+  const iron = troop.iron_cost > 0 ? Math.floor(resources.value.iron / troop.iron_cost) : Infinity;
+  return Math.max(0, Math.min(wood, clay, iron));
+};
+
+const canAffordOrder = (troop: AvailableTroop, quantity: number) => {
+  if (!troop.available || quantity <= 0) return troop.available;
+  return (
+    resources.value.wood >= troop.wood_cost * quantity &&
+    resources.value.clay >= troop.clay_cost * quantity &&
+    resources.value.iron >= troop.iron_cost * quantity
+  );
+};
+
+const fillMaxForTroop = (troop: AvailableTroop) => {
+  if (!troop.available) {
+    trainAmounts.value = {
+      ...trainAmounts.value,
+      [troop.id]: 0,
+    };
+    return;
+  }
+  trainAmounts.value = {
+    ...trainAmounts.value,
+    [troop.id]: maxTrainable(troop),
+  };
+};
+
 const formatNumber = (value: number) => numberFormatter.format(Math.max(0, Math.floor(value || 0)));
 
 const formatDuration = (seconds: number) => {
@@ -178,34 +239,28 @@ const formatTimestamp = (value: string) => {
 
 const { connect, onMessage, offMessage } = useWebSocket();
 
-const getVillageId = async () => {
-  try {
-    const response = await axios.get(`${API_BASE}/villages/?user_id=1`);
-    if (Array.isArray(response.data) && response.data.length > 0) {
-      villageId.value = response.data[0].id;
-    }
-  } catch (error) {
-    console.error('Error fetching village id:', error);
+const fetchTroopDefinitions = async (showLoader = true) => {
+  if (!villageId.value) return;
+  if (showLoader) {
+    loadingTroops.value = true;
   }
-};
-
-const fetchTroopDefinitions = async () => {
-  loadingTroops.value = true;
   try {
-    const response = await axios.get<Troop[]>(`${API_BASE}/troops/`);
+    const response = await axios.get<AvailableTroop[]>(`${API_BASE}/villages/${villageId.value}/available-troops`);
     const sorted = [...response.data].sort((a, b) => a.id - b.id);
     troops.value = sorted;
 
     const nextAmounts: Record<number, number> = {};
     sorted.forEach((troop) => {
       const current = trainAmounts.value[troop.id] ?? 0;
-      nextAmounts[troop.id] = current;
+      nextAmounts[troop.id] = troop.available ? current : 0;
     });
     trainAmounts.value = nextAmounts;
   } catch (error) {
     console.error('Error fetching troops:', error);
   } finally {
-    loadingTroops.value = false;
+    if (showLoader) {
+      loadingTroops.value = false;
+    }
   }
 };
 
@@ -280,6 +335,9 @@ const clearSelection = () => {
     cleared[id] = 0;
   });
   trainAmounts.value = cleared;
+  trainError.value = null;
+  trainErrorDetail.value = null;
+  successMessage.value = null;
 };
 
 const applyResourceUpdate = (payload: ResourceUpdatePayload) => {
@@ -292,6 +350,7 @@ const refreshDynamicData = () => {
   fetchQueue(false);
   fetchTrainedTroops(false);
   fetchResources(false);
+  fetchTroopDefinitions(false);
 };
 
 const handleSocketMessage = (event: MessageEvent) => {
@@ -316,13 +375,64 @@ const handleSocketMessage = (event: MessageEvent) => {
 const train = async () => {
   if (!villageId.value || isSubmitting.value) return;
 
-  const orders = Object.entries(trainAmounts.value)
+  const unavailableSelections = Object.entries(trainAmounts.value)
     .map(([troopId, quantity]) => ({ troop_id: Number(troopId), quantity: Number(quantity) || 0 }))
-    .filter((order) => order.quantity > 0);
+    .filter((order) => order.quantity > 0 && !troopById.value[order.troop_id]?.available);
+
+  if (unavailableSelections.length > 0) {
+    const missingMap = new Map<string, BuildingRequirement>();
+    unavailableSelections.forEach((selection) => {
+      const lockedTroop = troopById.value[selection.troop_id];
+      (lockedTroop?.missing_requirements ?? []).forEach((req) => {
+        missingMap.set(req.building, req);
+      });
+    });
+    const firstLocked = unavailableSelections[0];
+    const firstTroop = troopById.value[firstLocked.troop_id];
+    trainError.value = firstTroop
+      ? `${firstTroop.name} is locked. Upgrade the required buildings to train this unit.`
+      : 'Selected troop is locked.';
+    trainErrorDetail.value = {
+      missing: Array.from(missingMap.values()),
+    };
+    return;
+  }
+
+  const orders = selectedOrders.value;
 
   if (orders.length === 0) {
     trainError.value = 'Select at least one unit to train.';
     trainErrorDetail.value = null;
+    return;
+  }
+
+  const costSummary = orders.reduce(
+    (acc, order) => {
+      const troop = troopById.value[order.troop_id];
+      if (!troop) {
+        return acc;
+      }
+      acc.wood += troop.wood_cost * order.quantity;
+      acc.clay += troop.clay_cost * order.quantity;
+      acc.iron += troop.iron_cost * order.quantity;
+      return acc;
+    },
+    { wood: 0, clay: 0, iron: 0 }
+  );
+
+  if (
+    costSummary.wood > resources.value.wood ||
+    costSummary.clay > resources.value.clay ||
+    costSummary.iron > resources.value.iron
+  ) {
+    trainError.value = 'Not enough resources for the requested troops.';
+    trainErrorDetail.value = {
+      shortage: {
+        wood: Math.max(0, costSummary.wood - resources.value.wood),
+        clay: Math.max(0, costSummary.clay - resources.value.clay),
+        iron: Math.max(0, costSummary.iron - resources.value.iron),
+      },
+    };
     return;
   }
 
@@ -347,20 +457,26 @@ const train = async () => {
     clearSelection();
     fetchQueue(false);
     fetchResources(false);
+    fetchTrainedTroops(false);
+    fetchTroopDefinitions(false);
   } catch (error: unknown) {
     successMessage.value = null;
     if (axios.isAxiosError(error)) {
       const detail = error.response?.data?.detail;
       if (typeof detail === 'string') {
         trainError.value = detail;
+        trainErrorDetail.value = null;
       } else if (detail && typeof detail === 'object') {
-        trainError.value = (detail as Record<string, unknown>).message as string ?? 'Unable to train troops.';
-        trainErrorDetail.value = detail as Record<string, unknown>;
+        const detailRecord = detail as Record<string, unknown>;
+        trainError.value = (detailRecord.message as string) ?? 'Unable to train troops.';
+        trainErrorDetail.value = detailRecord;
       } else {
         trainError.value = 'Unable to train troops.';
+        trainErrorDetail.value = null;
       }
     } else {
       trainError.value = 'Unable to train troops.';
+      trainErrorDetail.value = null;
     }
   } finally {
     isSubmitting.value = false;
@@ -368,8 +484,17 @@ const train = async () => {
 };
 
 onMounted(async () => {
-  await getVillageId();
+  await ensureAuthReady();
+  try {
+    await ensureActiveVillageId();
+  } catch (error) {
+    console.error('Unable to resolve active village id:', error);
+    trainError.value = 'Unable to load barracks data. Please select a village.';
+    return;
+  }
+
   if (!villageId.value) {
+    trainError.value = 'No active village found. Create a village to begin training troops.';
     return;
   }
 
@@ -391,6 +516,26 @@ onMounted(async () => {
     refreshDynamicData();
   }, 10000);
 });
+
+watch(
+  villageId,
+  async (newId, oldId) => {
+    if (!newId || newId === oldId) {
+      return;
+    }
+    trainError.value = null;
+    trainErrorDetail.value = null;
+    successMessage.value = null;
+    if (detachSocket) {
+      detachSocket();
+      detachSocket = null;
+    }
+    connect(newId.toString());
+    detachSocket = onMessage(handleSocketMessage);
+    clearSelection();
+    await Promise.all([fetchTroopDefinitions(), fetchQueue(), fetchTrainedTroops(), fetchResources()]);
+  }
+);
 
 onUnmounted(() => {
   if (ticker !== null) {
@@ -454,9 +599,12 @@ onUnmounted(() => {
               <div
                 v-for="troop in troops"
                 :key="troop.id"
-                class="rounded-xl border border-secondary/30 bg-background/60 p-4 shadow-sm"
+                :class="[
+                  'rounded-xl border border-secondary/30 bg-background/60 p-4 shadow-sm transition',
+                  { 'opacity-60': !troop.available }
+                ]"
               >
-                <div class="flex flex-wrap items-center justify-between gap-4">
+                <div class="flex flex-wrap items-start justify-between gap-4">
                   <div>
                     <p class="text-lg font-semibold">{{ troop.name }}</p>
                     <p class="text-xs text-text-secondary">
@@ -468,16 +616,54 @@ onUnmounted(() => {
                     <p class="mt-1 text-xs text-text-secondary">
                       Ready units: {{ trainedByTroopId[troop.id]?.quantity ?? 0 }}
                     </p>
+                    <p
+                      v-if="troop.missing_requirements.length"
+                      class="mt-2 text-[11px] text-amber-300"
+                    >
+                      Requires
+                      <span
+                        v-for="req in troop.missing_requirements"
+                        :key="req.building"
+                        class="mr-2"
+                      >
+                        {{ req.display_name }} Lv {{ req.required_level }} (current {{ req.current_level }})
+                      </span>
+                    </p>
                   </div>
-                  <div class="flex items-center gap-3">
-                    <label class="text-sm text-text-secondary" :for="`train-${troop.id}`">Quantity</label>
-                    <input
-                      :id="`train-${troop.id}`"
-                      v-model.number="trainAmounts[troop.id]"
-                      type="number"
-                      min="0"
-                      class="w-24 rounded-lg border border-secondary/40 bg-surface/60 px-3 py-2 text-right"
-                    />
+                  <div class="flex flex-col items-end gap-2">
+                    <div class="flex items-center gap-3">
+                      <label class="text-sm text-text-secondary" :for="`train-${troop.id}`">Quantity</label>
+                      <input
+                        :id="`train-${troop.id}`"
+                        v-model.number="trainAmounts[troop.id]"
+                        type="number"
+                        min="0"
+                        :max="Math.max(0, maxTrainable(troop))"
+                        :disabled="!troop.available"
+                        class="w-24 rounded-lg border border-secondary/40 bg-surface/60 px-3 py-2 text-right"
+                        :class="{
+                          'border-red-500/70 text-red-200':
+                            (trainAmounts[troop.id] ?? 0) > 0 && !canAffordOrder(troop, trainAmounts[troop.id] ?? 0)
+                        }"
+                      />
+                    </div>
+                    <div class="flex items-center gap-2 text-xs text-text-secondary">
+                      <span>Max: {{ maxTrainable(troop) }}</span>
+                      <button
+                        type="button"
+                        class="rounded border border-primary/30 bg-primary/20 px-2 py-1 text-[11px] uppercase tracking-wide text-primary-100 hover:bg-primary/30 disabled:opacity-60"
+                        @click="fillMaxForTroop(troop)"
+                        :disabled="!troop.available || maxTrainable(troop) === 0"
+                      >
+                        Fill
+                      </button>
+                    </div>
+                    <p
+                      v-if="(trainAmounts[troop.id] ?? 0) > 0 && !canAffordOrder(troop, trainAmounts[troop.id] ?? 0)"
+                      class="text-[11px] text-red-300"
+                    >
+                      Not enough resources for {{ trainAmounts[troop.id] ?? 0 }} {{ troop.name }}.
+                    </p>
                   </div>
                 </div>
               </div>

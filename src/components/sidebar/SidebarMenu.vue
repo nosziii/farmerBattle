@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from "vue";
+import { ref, onMounted, onUnmounted, watch } from "vue";
 import axios from "axios";
 import ResourcePill from "./ResourcePill.vue";
 import ActionBtn from "./ActionBtn.vue";
 import NavGroup from "./NavGroup.vue";
 import NavItem from "./NavItem.vue";
-
-const API_BASE = "http://localhost:8000/api";
+import {
+  API_BASE,
+  activeVillageId,
+  ensureActiveVillageId,
+} from "../../services/villageState";
 
 /** Compact mód tárolása */
 const isCompact = ref(localStorage.getItem("fb_sidebar_compact") === "1");
@@ -25,8 +28,13 @@ const resourceSnapshot = ref({
 let resourcePoller: number | null = null;
 
 const fetchResourceSnapshot = async () => {
+  if (!activeVillageId.value) {
+    return;
+  }
   try {
-    const { data } = await axios.get(`${API_BASE}/villages/1`);
+    const { data } = await axios.get(
+      `${API_BASE}/villages/${activeVillageId.value}`
+    );
     resourceSnapshot.value = {
       gold: data.gold ?? 0,
       wood: data.wood ?? 0,
@@ -38,12 +46,11 @@ const fetchResourceSnapshot = async () => {
   }
 };
 
-/** A te init hívásod */
 onMounted(async () => {
   try {
-    await axios.post(`${API_BASE}/init/`);
+    await ensureActiveVillageId();
   } catch (error) {
-    console.error("Error initializing data:", error);
+    console.error("Failed to resolve active village:", error);
   }
   await fetchResourceSnapshot();
   resourcePoller = window.setInterval(fetchResourceSnapshot, 5000);
@@ -55,6 +62,14 @@ onUnmounted(() => {
     resourcePoller = null;
   }
 });
+
+watch(
+  activeVillageId,
+  () => {
+    fetchResourceSnapshot();
+  },
+  { flush: "post" }
+);
 </script>
 
 <template>
@@ -178,7 +193,7 @@ onUnmounted(() => {
     <!-- Nav groups -->
     <nav class="space-y-4 overflow-y-auto pr-1 sidebar-scroll pb-28">
       <NavGroup icon="🏡" title="Village" :compact="isCompact">
-        <NavItem to="/" icon="🏠" label="Town Square" />
+        <NavItem to="/village" icon="🏠" label="Town Square" />
         <NavItem to="/build" icon="🧱" label="Build & Upgrades" />
         <NavItem to="/storage" icon="📦" label="Storage" />
         <NavItem to="/market" icon="🛒" label="Market" badge="2" />

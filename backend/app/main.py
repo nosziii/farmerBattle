@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .database import engine, Base, SessionLocal
-from .routers import village, buildings, leaderboard, map, battle, user, init, troops, admin
+from .routers import village, buildings, leaderboard, map, battle, user, init, troops, admin, auth as auth_router
 from . import websocket
 from . import crud
 
@@ -37,6 +37,7 @@ app.include_router(user.router, prefix="/api")
 app.include_router(init.router, prefix="/api")
 app.include_router(troops.router, prefix="/api")
 app.include_router(admin.router, prefix="/api/admin")
+app.include_router(auth_router.router, prefix="")
 app.include_router(websocket.router)
 
 async def process_training_queue_task():
@@ -105,6 +106,12 @@ async def process_barbarian_growth_task():
 
 @app.on_event("startup")
 async def startup_event():
+    db = SessionLocal()
+    try:
+        crud.ensure_default_user(db)
+        crud.create_initial_troops(db)
+    finally:
+        db.close()
     asyncio.create_task(process_training_queue_task())
     asyncio.create_task(process_resource_generation_task())
     asyncio.create_task(process_building_queue_task())

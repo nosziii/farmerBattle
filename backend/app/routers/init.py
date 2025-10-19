@@ -18,12 +18,9 @@ def get_db():
 @router.post("/init/")
 def init_data(db: Session = Depends(get_db)):
     crud.create_initial_troops(db)
-    try:
-        crud.create_user(db, models.UserCreate(username="testuser", password="password"))
-    except:
-        db.rollback() # User already exists
+    default_user = crud.ensure_default_user(db)
 
-    if not crud.get_villages_by_user_id(db, 1):
-        crud.create_village(db, models.VillageCreate(name="My New Village"))
+    if not crud.get_villages_by_user_id(db, default_user.id):
+        crud.create_village(db, models.VillageCreate(name="My New Village", user_id=default_user.id))
 
     return {"message": "Data initialized"}

@@ -6,8 +6,12 @@ import ResourceCard from '../components/ResourceCard.vue';
 import BuildingDetailCard from '../components/buildings/BuildingDetailCard.vue';
 
 import type { BuildingStatus, BuildingQueueItem } from '../types/buildings';
-
-const API_BASE = 'http://localhost:8000/api';
+import { ensureAuthReady } from '../services/auth';
+import {
+  API_BASE,
+  activeVillageId,
+  ensureActiveVillageId,
+} from '../services/villageState';
 
 interface ResourceBalances {
   wood: number;
@@ -22,7 +26,7 @@ interface BuildingUpgradeResponse {
   queue: BuildingQueueItem[];
 }
 
-const villageId = ref(1);
+const villageId = activeVillageId;
 
 const buildingStatuses = ref<BuildingStatus[]>([]);
 const buildingQueue = ref<BuildingQueueItem[]>([]);
@@ -172,6 +176,9 @@ const canAfford = (status: BuildingStatus) => {
 };
 
 const fetchVillageResources = async () => {
+  if (!villageId.value) {
+    return;
+  }
   const response = await axios.get(`${API_BASE}/villages/${villageId.value}`);
   const village = response.data;
   resourceBalances.value = {
@@ -212,6 +219,9 @@ const updateResourceCapacitiesFromStatuses = () => {
 };
 
 const fetchBuildingStatuses = async () => {
+  if (!villageId.value) {
+    return;
+  }
   const response = await axios.get<BuildingStatus[]>(
     `${API_BASE}/villages/${villageId.value}/buildings`
   );
@@ -220,6 +230,9 @@ const fetchBuildingStatuses = async () => {
 };
 
 const fetchBuildingQueue = async () => {
+  if (!villageId.value) {
+    return;
+  }
   const response = await axios.get<BuildingQueueItem[]>(
     `${API_BASE}/villages/${villageId.value}/building-queue`
   );
@@ -230,6 +243,10 @@ const fetchAll = async () => {
   loading.value = true;
   error.value = null;
   try {
+    await ensureActiveVillageId();
+    if (!villageId.value) {
+      throw new Error('No active village available.');
+    }
     await Promise.all([
       fetchVillageResources(),
       fetchBuildingStatuses(),
@@ -244,6 +261,10 @@ const fetchAll = async () => {
 };
 
 const handleUpgrade = async (buildingKey: string) => {
+  if (!villageId.value) {
+    addNotification('No active village selected.', 'error');
+    return;
+  }
   try {
     const response = await axios.post<BuildingUpgradeResponse>(
       `${API_BASE}/villages/${villageId.value}/upgrade/${buildingKey}`
@@ -265,8 +286,9 @@ const handleUpgrade = async (buildingKey: string) => {
   }
 };
 
-onMounted(() => {
-  fetchAll();
+onMounted(async () => {
+  await ensureAuthReady();
+  await fetchAll();
   ticker = window.setInterval(() => {
     now.value = Date.now();
   }, 1000);
@@ -304,6 +326,16 @@ const stopAutoRefresh = () => {
     refreshHandle = null;
   }
 };
+
+watch(
+  activeVillageId,
+  async (newId, oldId) => {
+    if (!newId || newId === oldId) {
+      return;
+    }
+    await fetchAll();
+  }
+);
 
 watch(
   hasActiveUpgrade,

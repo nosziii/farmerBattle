@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pydantic import BaseModel, ConfigDict
 from typing import List, Optional, Literal, Dict
 import datetime
@@ -12,13 +14,14 @@ class UserCreate(UserBase):
 class User(UserBase):
     id: int
     is_active: bool
+    is_admin: bool = False
     model_config = ConfigDict(from_attributes=True)
 
 class VillageBase(BaseModel):
     name: str
 
 class VillageCreate(VillageBase):
-    pass
+    user_id: Optional[int] = None
 
 class Village(VillageBase):
     id: int
@@ -103,12 +106,23 @@ class TroopBase(BaseModel):
     iron_cost: int
     training_time: int
 
+
+class TroopRequirement(BaseModel):
+    building: str
+    level: int
+
 class TroopCreate(TroopBase):
     pass
 
 class Troop(TroopBase):
     id: int
+    requirements: List[TroopRequirement] = []
     model_config = ConfigDict(from_attributes=True)
+
+
+class TroopAvailability(Troop):
+    available: bool
+    missing_requirements: List[BuildingRequirementStatus] = []
 
 class VillageTroopBase(BaseModel):
     troop_id: int
@@ -231,9 +245,36 @@ class AdminUserCreate(BaseModel):
     password: str
 
 
+class AdminUserUpdate(BaseModel):
+    username: Optional[str] = None
+    password: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
 class MapPosition(BaseModel):
     x: int
     y: int
+
+
+class AdminTroop(Troop):
+    pass
+
+
+class AdminTroopCreate(TroopBase):
+    requirements: Dict[str, int]
+
+
+class AdminTroopUpdate(BaseModel):
+    name: Optional[str] = None
+    attack: Optional[int] = None
+    defense: Optional[int] = None
+    speed: Optional[int] = None
+    carry_capacity: Optional[int] = None
+    wood_cost: Optional[int] = None
+    clay_cost: Optional[int] = None
+    iron_cost: Optional[int] = None
+    training_time: Optional[int] = None
+    requirements: Optional[Dict[str, int]] = None
 
 
 class AdminVillageSummary(BaseModel):
@@ -273,3 +314,29 @@ class AdminAssignVillageTile(BaseModel):
     x: int
     y: int
     force: bool = False
+
+
+class RegisterRequest(UserCreate):
+    pass
+
+
+class LoginRequest(UserCreate):
+    pass
+
+
+class AuthTokens(BaseModel):
+    access_token: str
+    token_type: Literal["bearer"] = "bearer"
+
+
+class AuthResponse(AuthTokens):
+    user: User
+
+
+class AdminLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class AdminLoginResponse(BaseModel):
+    token: str

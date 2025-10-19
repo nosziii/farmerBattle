@@ -60,3 +60,48 @@ export interface AdminAssignTileRequest {
   y: number;
   force?: boolean;
 }
+
+export interface AdminTroopRequirement {
+  building: string;
+  level: number;
+}
+
+export interface AdminTroop {
+  id: number;
+  name: string;
+  attack: number;
+  defense: number;
+  speed: number;
+  carry_capacity: number;
+  wood_cost: number;
+  clay_cost: number;
+  iron_cost: number;
+  training_time: number;
+  requirements: AdminTroopRequirement[];
+}
+
+export interface AdminTroopCreate {
+  name: string;
+  attack: number;
+  defense: number;
+  speed: number;
+  carry_capacity: number;
+  wood_cost: number;
+  clay_cost: number;
+  iron_cost: number;
+  training_time: number;
+  requirements: Record<string, number>;
+}
+
+export interface AdminTroopUpdate {
+  name?: string;
+  attack?: number;
+  defense?: number;
+  speed?: number;
+  carry_capacity?: number;
+  wood_cost?: number;
+  clay_cost?: number;
+  iron_cost?: number;
+  training_time?: number;
+  requirements?: Record<string, number>;
+}

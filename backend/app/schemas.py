@@ -100,6 +100,7 @@ class Troop(Base):
     clay_cost = Column(Integer)
     iron_cost = Column(Integer)
     training_time = Column(Integer)
+    requirements = relationship("TroopRequirement", back_populates="troop", cascade="all, delete-orphan")
 
 class VillageTroop(Base):
     __tablename__ = "village_troops"
@@ -124,6 +125,17 @@ class TrainingQueue(Base):
 
     village = relationship("Village")
     troop = relationship("Troop")
+
+
+class TroopRequirement(Base):
+    __tablename__ = "troop_requirements"
+
+    id = Column(Integer, primary_key=True, index=True)
+    troop_id = Column(Integer, ForeignKey("troops.id"), index=True, nullable=False)
+    building = Column(String, index=True)
+    level = Column(Integer, default=1)
+
+    troop = relationship("Troop", back_populates="requirements")
 
 
 class BuildingUpgradeQueue(Base):

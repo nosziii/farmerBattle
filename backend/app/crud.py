@@ -1,10 +1,15 @@
-from sqlalchemy.orm import Session, joinedload, selectinload
-from sqlalchemy import func
-from fastapi import HTTPException
-from . import models, schemas
+import os
 import datetime
 import random
 from typing import Dict, List, Optional
+
+from sqlalchemy.orm import Session, joinedload, selectinload
+from sqlalchemy import func
+from fastapi import HTTPException
+from passlib.context import CryptContext
+import bcrypt
+
+from . import models, schemas
 from .websocket import manager
 from .config.buildings import (
     BUILDING_CONFIG,
@@ -13,9 +18,56 @@ from .config.buildings import (
     get_next_level_definition,
 )
 from .config.world import WORLD_CONFIG
+from .config.troops import TROOP_DEFINITIONS
 
 RESOURCE_TICK_SECONDS = 5
 BARBARIAN_GROWTH_TICK_SECONDS = 60
+
+pwd_context = CryptContext(
+    schemes=["bcrypt"],
+    deprecated="auto",
+    bcrypt__ident="2b",
+    bcrypt__truncate_error=True,
+)
+
+DEFAULT_USER_USERNAME = os.getenv("DEFAULT_USER_USERNAME", "testuser")
+DEFAULT_USER_PASSWORD = os.getenv("DEFAULT_USER_PASSWORD", "password")
+
+
+def _hash_password(password: str) -> str:
+    try:
+        return pwd_context.hash(password)
+    except ValueError:
+        truncated = password[:72]
+        return pwd_context.hash(truncated)
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+def get_user(db: Session, user_id: int) -> Optional[schemas.User]:
+    return db.query(schemas.User).filter(schemas.User.id == user_id).first()
+
+
+def get_user_by_username(db: Session, username: str) -> Optional[schemas.User]:
+    return db.query(schemas.User).filter(schemas.User.username == username).first()
+
+
+def authenticate_user(db: Session, username: str, password: str) -> Optional[schemas.User]:
+    user = get_user_by_username(db, username)
+    if not user:
+        return None
+    if not verify_password(password, user.hashed_password):
+        return None
+    return user
+
+
+def ensure_default_user(db: Session) -> schemas.User:
+    user = db.query(schemas.User).filter(schemas.User.username == DEFAULT_USER_USERNAME).first()
+    if user:
+        return user
+    return create_user(db, models.UserCreate(username=DEFAULT_USER_USERNAME, password=DEFAULT_USER_PASSWORD))
 
 
 def _weighted_random_level() -> int:
@@ -314,6 +366,15 @@ def create_village(db: Session, village: models.VillageCreate):
     iron_level = get_level_definition("iron_mine", 1)
     town_hall_level_def = get_level_definition("town_hall", 1)
 
+    owner_id = getattr(village, "user_id", None)
+    if owner_id is None:
+        default_user = ensure_default_user(db)
+        owner_id = default_user.id
+    else:
+        user_exists = db.query(schemas.User).filter(schemas.User.id == owner_id).first()
+        if not user_exists:
+            raise HTTPException(status_code=404, detail="User not found")
+
     db_village = schemas.Village(
         name=village.name,
         wood=500,
@@ -347,7 +408,7 @@ def create_village(db: Session, village: models.VillageCreate):
         hospital_level=1,
         sanctuary_level=1,
         score=100,
-        user_id=1 # I will need to fix this later
+        user_id=owner_id
     )
     db.add(db_village)
     db.commit()
@@ -472,73 +533,160 @@ def get_battle_log(db: Session, battle_id: int):
     return db.query(schemas.BattleLog).filter(schemas.BattleLog.battle_id == battle_id).all()
 
 def create_user(db: Session, user: models.UserCreate):
-    hashed_password = user.password + "notreallyhashed"
+    hashed_password = _hash_password(user.password)
     db_user = schemas.User(username=user.username, hashed_password=hashed_password)
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
     return db_user
 
-def get_troops(db: Session):
-    return db.query(schemas.Troop).all()
+def _serialize_troop(troop: schemas.Troop) -> models.Troop:
+    return models.Troop(
+        id=troop.id,
+        name=troop.name,
+        attack=troop.attack,
+        defense=troop.defense,
+        speed=troop.speed,
+        carry_capacity=troop.carry_capacity,
+        wood_cost=troop.wood_cost,
+        clay_cost=troop.clay_cost,
+        iron_cost=troop.iron_cost,
+        training_time=troop.training_time,
+        requirements=[
+            models.TroopRequirement(building=req.building, level=req.level)
+            for req in troop.requirements
+        ],
+    )
 
-DEFAULT_TROOPS = [
-    {
-        "name": "Warrior",
-        "attack": 10,
-        "defense": 5,
-        "speed": 10,
-        "carry_capacity": 50,
-        "wood_cost": 50,
-        "clay_cost": 30,
-        "iron_cost": 10,
-        "training_time": 5,
-    },
-    {
-        "name": "Swordsman",
-        "attack": 20,
-        "defense": 10,
-        "speed": 8,
-        "carry_capacity": 30,
-        "wood_cost": 80,
-        "clay_cost": 50,
-        "iron_cost": 20,
-        "training_time": 7,
-    },
-    {
-        "name": "Archer",
-        "attack": 15,
-        "defense": 5,
-        "speed": 12,
-        "carry_capacity": 40,
-        "wood_cost": 60,
-        "clay_cost": 40,
-        "iron_cost": 15,
-        "training_time": 5,
-    },
-]
 
-def create_initial_troops(db: Session):
-    # Ensure defaults exist and keep their key stats in sync
+def _sync_troop_requirements(
+    db: Session,
+    troop: schemas.Troop,
+    requirements: Dict[str, int],
+) -> None:
+    existing = {req.building: req for req in troop.requirements}
+
+    for building, level in requirements.items():
+        entry = existing.pop(building, None)
+        if entry:
+            if entry.level != level:
+                entry.level = level
+        else:
+            troop.requirements.append(
+                schemas.TroopRequirement(building=building, level=level)
+            )
+
+    for leftover in existing.values():
+        db.delete(leftover)
+
+
+def create_initial_troops(db: Session) -> None:
     existing = {
         troop.name: troop
-        for troop in db.query(schemas.Troop).filter(schemas.Troop.name.in_([t["name"] for t in DEFAULT_TROOPS])).all()
+        for troop in db.query(schemas.Troop)
+        .options(selectinload(schemas.Troop.requirements))
+        .all()
     }
 
-    for data in DEFAULT_TROOPS:
-        troop = existing.get(data["name"])
-        if troop:
-            updated = False
-            for field, value in data.items():
-                if getattr(troop, field) != value:
-                    setattr(troop, field, value)
-                    updated = True
-            if updated:
-                db.add(troop)
-        else:
-            db.add(schemas.Troop(**data))
+    seen_names = set()
+
+    for definition in TROOP_DEFINITIONS:
+        name = definition["name"]
+        seen_names.add(name)
+
+        troop = existing.get(name)
+        if not troop:
+            troop = schemas.Troop(name=name)
+            db.add(troop)
+            existing[name] = troop
+
+        troop.attack = definition["attack"]
+        troop.defense = definition["defense"]
+        troop.speed = definition["speed"]
+        troop.carry_capacity = definition["carry_capacity"]
+        troop.wood_cost = definition["wood_cost"]
+        troop.clay_cost = definition["clay_cost"]
+        troop.iron_cost = definition["iron_cost"]
+        troop.training_time = definition["training_time"]
+
+        _sync_troop_requirements(db, troop, definition.get("requirements", {}))
 
     db.commit()
+
+
+def get_troops(db: Session) -> List[schemas.Troop]:
+    return (
+        db.query(schemas.Troop)
+        .options(selectinload(schemas.Troop.requirements))
+        .order_by(schemas.Troop.id.asc())
+        .all()
+    )
+
+
+def _validate_troop_values(values: Dict[str, Optional[int]]) -> None:
+    positive_fields = ("attack", "defense", "speed", "training_time")
+    non_negative_fields = ("carry_capacity", "wood_cost", "clay_cost", "iron_cost")
+
+    for field in positive_fields:
+        value = values.get(field)
+        if value is not None and value <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{field.replace('_', ' ').title()} must be greater than zero.",
+            )
+
+    for field in non_negative_fields:
+        value = values.get(field)
+        if value is not None and value < 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{field.replace('_', ' ').title()} must be zero or higher.",
+            )
+
+
+def get_troop_availability(db: Session, village_id: int) -> List[models.TroopAvailability]:
+    village = get_village(db, village_id)
+    if not village:
+        raise HTTPException(status_code=404, detail="Village not found")
+
+    troops = get_troops(db)
+
+    results: List[models.TroopAvailability] = []
+    for troop in troops:
+        requirement_statuses: List[models.BuildingRequirementStatus] = []
+        for requirement in troop.requirements:
+            level_field = _building_level_field(requirement.building)
+            current_level = int(getattr(village, level_field, 0))
+            try:
+                building_def = get_building_definition(requirement.building)
+            except KeyError:
+                building_def = None
+            display_name = (
+                building_def["display_name"]
+                if building_def is not None
+                else requirement.building.replace("_", " ").title()
+            )
+            requirement_statuses.append(
+                models.BuildingRequirementStatus(
+                    building=requirement.building,
+                    display_name=display_name,
+                    required_level=requirement.level,
+                    current_level=current_level,
+                    met=current_level >= requirement.level,
+                )
+            )
+
+        missing = [status for status in requirement_statuses if not status.met]
+
+        results.append(
+            models.TroopAvailability(
+                **_serialize_troop(troop).model_dump(),
+                available=len(missing) == 0,
+                missing_requirements=missing,
+            )
+        )
+
+    return results
 
 def train_troops(db: Session, village_id: int, troops: List[models.VillageTroopCreate]):
     village = get_village(db, village_id)
@@ -546,9 +694,44 @@ def train_troops(db: Session, village_id: int, troops: List[models.VillageTroopC
         raise HTTPException(status_code=404, detail="Village not found")
 
     for troop_order in troops:
-        troop = db.query(schemas.Troop).filter(schemas.Troop.id == troop_order.troop_id).first()
+        troop = (
+            db.query(schemas.Troop)
+            .options(selectinload(schemas.Troop.requirements))
+            .filter(schemas.Troop.id == troop_order.troop_id)
+            .first()
+        )
         if not troop:
             raise HTTPException(status_code=404, detail=f"Troop with id {troop_order.troop_id} not found")
+
+        unmet = []
+        for requirement in troop.requirements:
+            current_level = getattr(village, _building_level_field(requirement.building), 0)
+            if current_level < requirement.level:
+                building_def = get_building_definition(requirement.building)
+                display_name = (
+                    building_def["display_name"]
+                    if building_def is not None
+                    else requirement.building.replace("_", " ").title()
+                )
+                unmet.append(
+                    models.BuildingRequirementStatus(
+                        building=requirement.building,
+                        display_name=display_name,
+                        required_level=requirement.level,
+                        current_level=current_level,
+                        met=False,
+                    )
+                )
+
+        if unmet:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "requirements_not_met",
+                    "message": f"{troop.name} requires additional building upgrades.",
+                    "missing": [status.model_dump() for status in unmet],
+                },
+            )
 
         total_wood_cost = troop.wood_cost * troop_order.quantity
         total_clay_cost = troop.clay_cost * troop_order.quantity
@@ -617,21 +800,53 @@ def create_village(db: Session, village: models.VillageCreate):
     wood_level = get_level_definition("wood_mill", 1)
     clay_level = get_level_definition("clay_pit", 1)
     iron_level = get_level_definition("iron_mine", 1)
+    town_hall_level_def = get_level_definition("town_hall", 1)
+
+    owner_id = getattr(village, "user_id", None)
+    if owner_id is None:
+        default_user = ensure_default_user(db)
+        owner_id = default_user.id
+    else:
+        user_exists = (
+            db.query(schemas.User).filter(schemas.User.id == owner_id).first()
+        )
+        if not user_exists:
+            raise HTTPException(status_code=404, detail="User not found")
 
     db_village = schemas.Village(
         name=village.name,
         wood=500,
         clay=500,
         iron=500,
+        gold=0,
         wood_production=wood_level["production"],
         clay_production=clay_level["production"],
         iron_production=iron_level["production"],
+        gold_production=town_hall_level_def["production"],
         last_updated=datetime.datetime.utcnow(),
         wood_mill_level=1,
         clay_pit_level=1,
         iron_mine_level=1,
+        town_hall_level=1,
+        warehouse_level=1,
+        farm_level=1,
+        barracks_level=1,
+        smithy_level=1,
+        training_ground_level=1,
+        stable_level=1,
+        workshop_level=1,
+        forge_level=1,
+        market_level=1,
+        embassy_level=1,
+        library_level=1,
+        academy_level=1,
+        noble_house_level=1,
+        wall_level=1,
+        watchtower_level=1,
+        hospital_level=1,
+        sanctuary_level=1,
         score=100,
-        user_id=1 # I will need to fix this later
+        user_id=owner_id,
     )
     db.add(db_village)
     db.commit()
@@ -756,7 +971,7 @@ def get_battle_log(db: Session, battle_id: int):
     return db.query(schemas.BattleLog).filter(schemas.BattleLog.battle_id == battle_id).all()
 
 def create_user(db: Session, user: models.UserCreate):
-    hashed_password = user.password + "notreallyhashed"
+    hashed_password = _hash_password(user.password)
     db_user = schemas.User(username=user.username, hashed_password=hashed_password)
     db.add(db_user)
     db.commit()
@@ -766,26 +981,6 @@ def create_user(db: Session, user: models.UserCreate):
 def get_troops(db: Session):
     return db.query(schemas.Troop).all()
 
-def create_initial_troops(db: Session):
-    existing = {
-        troop.name: troop
-        for troop in db.query(schemas.Troop).filter(schemas.Troop.name.in_([t["name"] for t in DEFAULT_TROOPS])).all()
-    }
-
-    for data in DEFAULT_TROOPS:
-        troop = existing.get(data["name"])
-        if troop:
-            updated = False
-            for field, value in data.items():
-                if getattr(troop, field) != value:
-                    setattr(troop, field, value)
-                    updated = True
-            if updated:
-                db.add(troop)
-        else:
-            db.add(schemas.Troop(**data))
-
-    db.commit()
 
 from sqlalchemy.orm import Session, joinedload, selectinload
 from fastapi import HTTPException
@@ -826,21 +1021,53 @@ def create_village(db: Session, village: models.VillageCreate):
     wood_level = get_level_definition("wood_mill", 1)
     clay_level = get_level_definition("clay_pit", 1)
     iron_level = get_level_definition("iron_mine", 1)
+    town_hall_level_def = get_level_definition("town_hall", 1)
+
+    owner_id = getattr(village, "user_id", None)
+    if owner_id is None:
+        default_user = ensure_default_user(db)
+        owner_id = default_user.id
+    else:
+        user_exists = (
+            db.query(schemas.User).filter(schemas.User.id == owner_id).first()
+        )
+        if not user_exists:
+            raise HTTPException(status_code=404, detail="User not found")
 
     db_village = schemas.Village(
         name=village.name,
         wood=500,
         clay=500,
         iron=500,
+        gold=0,
         wood_production=wood_level["production"],
         clay_production=clay_level["production"],
         iron_production=iron_level["production"],
+        gold_production=town_hall_level_def["production"],
         last_updated=datetime.datetime.utcnow(),
         wood_mill_level=1,
         clay_pit_level=1,
         iron_mine_level=1,
+        town_hall_level=1,
+        warehouse_level=1,
+        farm_level=1,
+        barracks_level=1,
+        smithy_level=1,
+        training_ground_level=1,
+        stable_level=1,
+        workshop_level=1,
+        forge_level=1,
+        market_level=1,
+        embassy_level=1,
+        library_level=1,
+        academy_level=1,
+        noble_house_level=1,
+        wall_level=1,
+        watchtower_level=1,
+        hospital_level=1,
+        sanctuary_level=1,
         score=100,
-        user_id=1 # I will need to fix this later
+        user_id=owner_id,
     )
     db.add(db_village)
     db.commit()
@@ -965,7 +1192,7 @@ def get_battle_log(db: Session, battle_id: int):
     return db.query(schemas.BattleLog).filter(schemas.BattleLog.battle_id == battle_id).all()
 
 def create_user(db: Session, user: models.UserCreate):
-    hashed_password = user.password + "notreallyhashed"
+    hashed_password = _hash_password(user.password)
     db_user = schemas.User(username=user.username, hashed_password=hashed_password)
     db.add(db_user)
     db.commit()
@@ -995,62 +1222,6 @@ def process_training_queue(db: Session):
 def get_troops(db: Session):
     return db.query(schemas.Troop).all()
 
-DEFAULT_TROOPS = [
-    {
-        "name": "Warrior",
-        "attack": 10,
-        "defense": 5,
-        "speed": 10,
-        "carry_capacity": 50,
-        "wood_cost": 50,
-        "clay_cost": 30,
-        "iron_cost": 10,
-        "training_time": 5,
-    },
-    {
-        "name": "Swordsman",
-        "attack": 20,
-        "defense": 10,
-        "speed": 8,
-        "carry_capacity": 30,
-        "wood_cost": 80,
-        "clay_cost": 50,
-        "iron_cost": 20,
-        "training_time": 7,
-    },
-    {
-        "name": "Archer",
-        "attack": 15,
-        "defense": 5,
-        "speed": 12,
-        "carry_capacity": 40,
-        "wood_cost": 60,
-        "clay_cost": 40,
-        "iron_cost": 15,
-        "training_time": 5,
-    },
-]
-
-def create_initial_troops(db: Session):
-    existing = {
-        troop.name: troop
-        for troop in db.query(schemas.Troop).filter(schemas.Troop.name.in_([t["name"] for t in DEFAULT_TROOPS])).all()
-    }
-
-    for data in DEFAULT_TROOPS:
-        troop = existing.get(data["name"])
-        if troop:
-            updated = False
-            for field, value in data.items():
-                if getattr(troop, field) != value:
-                    setattr(troop, field, value)
-                    updated = True
-            if updated:
-                db.add(troop)
-        else:
-            db.add(schemas.Troop(**data))
-
-    db.commit()
 
 async def train_troops(db: Session, village_id: int, troops: List[models.VillageTroopCreate]):
     village = get_village(db, village_id)
@@ -1492,6 +1663,141 @@ def admin_list_users(db: Session) -> List[models.AdminUser]:
 def admin_create_user(db: Session, payload: models.AdminUserCreate) -> models.AdminUser:
     user = create_user(db, models.UserCreate(username=payload.username, password=payload.password))
     return models.AdminUser(id=user.id, username=user.username, is_active=user.is_active, village_ids=[])
+
+
+def admin_update_user(db: Session, user_id: int, payload: models.AdminUserUpdate) -> models.AdminUser:
+    user = db.query(schemas.User).filter(schemas.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if payload.username is not None:
+        username = payload.username.strip()
+        if not username:
+            raise HTTPException(status_code=400, detail="Username cannot be empty")
+        existing = (
+            db.query(schemas.User)
+            .filter(schemas.User.username == username, schemas.User.id != user.id)
+            .first()
+        )
+        if existing:
+            raise HTTPException(status_code=409, detail="Username already taken")
+        user.username = username
+
+    if payload.password:
+        user.hashed_password = _hash_password(payload.password)
+
+    if payload.is_active is not None:
+        user.is_active = bool(payload.is_active)
+
+    db.commit()
+    db.refresh(user)
+
+    return models.AdminUser(
+        id=user.id,
+        username=user.username,
+        is_active=user.is_active,
+        village_ids=[village.id for village in user.villages],
+    )
+
+
+def admin_list_troops(db: Session) -> List[models.AdminTroop]:
+    troops = get_troops(db)
+    return [models.AdminTroop(**_serialize_troop(troop).model_dump()) for troop in troops]
+
+
+def admin_create_troop(db: Session, payload: models.AdminTroopCreate) -> models.AdminTroop:
+    existing = db.query(schemas.Troop).filter(schemas.Troop.name == payload.name).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Troop name already exists")
+
+    _validate_troop_values(
+        {
+            "attack": payload.attack,
+            "defense": payload.defense,
+            "speed": payload.speed,
+            "carry_capacity": payload.carry_capacity,
+            "wood_cost": payload.wood_cost,
+            "clay_cost": payload.clay_cost,
+            "iron_cost": payload.iron_cost,
+            "training_time": payload.training_time,
+        }
+    )
+
+    troop = schemas.Troop(
+        name=payload.name,
+        attack=payload.attack,
+        defense=payload.defense,
+        speed=payload.speed,
+        carry_capacity=payload.carry_capacity,
+        wood_cost=payload.wood_cost,
+        clay_cost=payload.clay_cost,
+        iron_cost=payload.iron_cost,
+        training_time=payload.training_time,
+    )
+    db.add(troop)
+    db.flush()
+    _sync_troop_requirements(db, troop, payload.requirements or {})
+    db.commit()
+    db.refresh(troop)
+    return models.AdminTroop(**_serialize_troop(troop).model_dump())
+
+
+def admin_update_troop(db: Session, troop_id: int, payload: models.AdminTroopUpdate) -> models.AdminTroop:
+    troop = (
+        db.query(schemas.Troop)
+        .options(selectinload(schemas.Troop.requirements))
+        .filter(schemas.Troop.id == troop_id)
+        .first()
+    )
+    if not troop:
+        raise HTTPException(status_code=404, detail="Troop not found")
+
+    if payload.name is not None and payload.name != troop.name:
+        name = payload.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Troop name cannot be empty")
+        existing = (
+            db.query(schemas.Troop)
+            .filter(schemas.Troop.name == name, schemas.Troop.id != troop.id)
+            .first()
+        )
+        if existing:
+            raise HTTPException(status_code=409, detail="Troop name already exists")
+        troop.name = name
+
+    _validate_troop_values(
+        {
+            "attack": payload.attack,
+            "defense": payload.defense,
+            "speed": payload.speed,
+            "carry_capacity": payload.carry_capacity,
+            "wood_cost": payload.wood_cost,
+            "clay_cost": payload.clay_cost,
+            "iron_cost": payload.iron_cost,
+            "training_time": payload.training_time,
+        }
+    )
+
+    for field in (
+        "attack",
+        "defense",
+        "speed",
+        "carry_capacity",
+        "wood_cost",
+        "clay_cost",
+        "iron_cost",
+        "training_time",
+    ):
+        value = getattr(payload, field)
+        if value is not None:
+            setattr(troop, field, value)
+
+    if payload.requirements is not None:
+        _sync_troop_requirements(db, troop, payload.requirements)
+
+    db.commit()
+    db.refresh(troop)
+    return models.AdminTroop(**_serialize_troop(troop).model_dump())
 
 
 def admin_list_villages(db: Session) -> List[models.AdminVillageSummary]:
