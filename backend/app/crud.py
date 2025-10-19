@@ -805,6 +805,13 @@ def list_expeditions(
     village_id: int,
     status_filter: Optional[str] = None,
 ) -> models.ExpeditionListResponse:
+    # Ensure any expeditions that have completed arrival/return phases are resolved
+    # before serving the current snapshot. This keeps the response fresh even if
+    # the background processor is delayed.
+    updated_villages, _ = process_expeditions(db)
+    if updated_villages:
+        db.expire_all()
+
     query = (
         db.query(schemas.Expedition)
         .options(
