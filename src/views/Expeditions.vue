@@ -38,6 +38,8 @@ const plannerSubmitting = ref(false);
 const troopSelections = ref<Record<number, number>>({});
 
 const selectedExpedition = ref<ExpeditionSummary | null>(null);
+const autoRefreshPending = ref(false);
+let autoRefreshHandle: number | null = null;
 
 const { connect, onMessage, offMessage } = useWebSocket();
 let detachSocket: (() => void) | null = null;
@@ -145,6 +147,32 @@ const activeExpeditionsWithProgress = computed<DecoratedExpedition[]>(() => {
     };
   });
 });
+
+const triggerAutoRefresh = () => {
+  if (autoRefreshPending.value) return;
+  autoRefreshPending.value = true;
+  autoRefreshHandle = window.setTimeout(async () => {
+    try {
+      await fetchExpeditions(false);
+    } finally {
+      autoRefreshPending.value = false;
+      autoRefreshHandle = null;
+    }
+  }, 200);
+};
+
+watch(
+  activeExpeditionsWithProgress,
+  (list) => {
+    const needsRefresh = list.some(
+      (expedition) => expedition.currentPhase !== 'completed' && expedition.etaSeconds <= 0
+    );
+    if (needsRefresh) {
+      triggerAutoRefresh();
+    }
+  },
+  { deep: true }
+);
 
 const totalSelectedTroops = computed(() =>
   Object.values(troopSelections.value).reduce((sum, qty) => sum + (Number.isFinite(qty) ? Number(qty) : 0), 0)
@@ -418,6 +446,10 @@ onUnmounted(() => {
   if (ticker !== null) {
     window.clearInterval(ticker);
     ticker = null;
+  }
+  if (autoRefreshHandle !== null) {
+    window.clearTimeout(autoRefreshHandle);
+    autoRefreshHandle = null;
   }
   if (detachSocket) {
     detachSocket();
