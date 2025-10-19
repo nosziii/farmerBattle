@@ -3,6 +3,7 @@ import { computed, defineComponent, h, onMounted, ref } from 'vue';
 import type { PropType } from 'vue';
 import axios from 'axios';
 import type { BuildingStatus } from '../types/buildings';
+import { useI18n } from '../i18n';
 
 const API_BASE = 'http://localhost:8000/api';
 const villageId = 1;
@@ -10,6 +11,7 @@ const villageId = 1;
 const loading = ref(true);
 const error = ref<string | null>(null);
 const buildingStatuses = ref<BuildingStatus[]>([]);
+const { t } = useI18n();
 
 const groupedBuildings = computed(() => {
   const sorted = [...buildingStatuses.value].sort((a, b) => a.order - b.order);
@@ -24,6 +26,15 @@ const groupedBuildings = computed(() => {
     items,
   }));
 });
+
+const translateCategory = (category: string) => {
+  const key = `build.categories.${category}`;
+  const translated = t(key, { category });
+  return translated === key ? category : translated;
+};
+
+const formatGroupCount = (count: number) =>
+  count === 1 ? t('info.groupCount.single', { count }) : t('info.groupCount.multi', { count });
 
 type TreeRequirement = {
   key: string;
@@ -129,7 +140,9 @@ const BuildingTreeNode = defineComponent({
                       class: 'tree-node__badge',
                       key: `${props.node.key}-${requirement.key}`,
                     },
-                    `${requirement.name} Lv.${requirement.level}`
+                    `${requirement.name} ${t('components.buildingDetail.levelShort', {
+                      level: requirement.level,
+                    })}`
                   )
                 )
               )
@@ -165,7 +178,7 @@ const fetchBuildingData = async () => {
     console.error('Unable to load building info:', err);
     error.value =
       err.response?.data?.detail ??
-      'We could not load the building handbook right now. Please try again shortly.';
+      t('info.errors.load');
   } finally {
     loading.value = false;
   }
@@ -178,12 +191,12 @@ const formatRequirement = (status: BuildingStatus) =>
     ? status.requirements
         .map(
           (requirement) =>
-            `${requirement.display_name} Lv. ${requirement.required_level}${
-              requirement.met ? ' ✔︎' : ''
-            }`
+            `${requirement.display_name} ${t('components.buildingDetail.levelShort', {
+              level: requirement.required_level,
+            })}${requirement.met ? ' ✔︎' : ''}`
         )
         .join(', ')
-    : 'No prerequisites';
+    : t('info.requirements.none');
 </script>
 
 <template>
@@ -195,21 +208,19 @@ const formatRequirement = (status: BuildingStatus) =>
       <div class="absolute bottom-0 left-1/2 h-48 w-48 -translate-x-1/2 rounded-full bg-secondary-500/10 blur-3xl"></div>
       <div class="relative z-10 max-w-3xl space-y-4">
         <p class="text-xs uppercase tracking-[0.4em] text-primary-200/80">
-          Builder’s Handbook
+          {{ t('info.hero.badge') }}
         </p>
         <h1 class="text-4xl md:text-5xl font-semibold text-text-primary">
-          Plan your rise to a thriving kingdom
+          {{ t('info.hero.title') }}
         </h1>
         <p class="text-base md:text-lg text-text-secondary leading-relaxed">
-          Every structure you raise unlocks new opportunities. Use this guide to understand
-          how buildings interact, which upgrades open new troops or technologies, and how to
-          prioritise your development path.
+          {{ t('info.hero.description') }}
         </p>
       </div>
     </section>
 
     <section v-if="loading" class="text-center text-text-secondary py-20">
-      <p>Compiling building schematics...</p>
+      <p>{{ t('info.loading') }}</p>
     </section>
 
     <section
@@ -227,10 +238,10 @@ const formatRequirement = (status: BuildingStatus) =>
       >
         <div class="flex items-center justify-between gap-4">
           <h2 class="text-2xl font-semibold text-text-primary">
-            {{ group.category }}
+            {{ translateCategory(group.category) }}
           </h2>
           <span class="text-xs uppercase tracking-wide text-text-secondary/60">
-            {{ group.items.length }} building{{ group.items.length === 1 ? '' : 's' }}
+            {{ formatGroupCount(group.items.length) }}
           </span>
         </div>
 
@@ -254,7 +265,7 @@ const formatRequirement = (status: BuildingStatus) =>
                   <span
                     class="rounded-full border border-primary/40 bg-primary/10 px-2 py-[2px] text-[10px] uppercase tracking-wide text-primary-200"
                   >
-                    Lv. {{ status.level }}/{{ status.max_level }}
+                    {{ t('info.levelProgress', { level: status.level, max: status.max_level }) }}
                   </span>
                 </div>
                 <p class="text-sm text-text-secondary leading-relaxed">
@@ -266,7 +277,7 @@ const formatRequirement = (status: BuildingStatus) =>
             <div class="space-y-3 text-sm text-text-secondary">
               <div>
                 <p class="text-[11px] uppercase tracking-wide text-text-secondary/60 mb-1">
-                  Requirements
+                  {{ t('components.buildingDetail.requirementsHeading') }}
                 </p>
                 <p>
                   {{ formatRequirement(status) }}
@@ -275,7 +286,7 @@ const formatRequirement = (status: BuildingStatus) =>
 
               <div v-if="status.effects.length">
                 <p class="text-[11px] uppercase tracking-wide text-text-secondary/60 mb-1">
-                  Effects when upgraded
+                  {{ t('info.labels.effectsOnUpgrade') }}
                 </p>
                 <ul class="space-y-1">
                   <li v-for="effect in status.effects" :key="effect" class="flex gap-2">
@@ -287,7 +298,7 @@ const formatRequirement = (status: BuildingStatus) =>
 
               <div v-if="status.unlocks.length">
                 <p class="text-[11px] uppercase tracking-wide text-text-secondary/60 mb-1">
-                  Unlocks
+                  {{ t('components.buildingDetail.unlocksHeading') }}
                 </p>
                 <ul class="space-y-1">
                   <li v-for="unlock in status.unlocks" :key="unlock" class="flex gap-2">
@@ -303,9 +314,9 @@ const formatRequirement = (status: BuildingStatus) =>
 
       <section class="space-y-4">
         <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <h2 class="text-2xl font-semibold text-text-primary">Dependency Trees</h2>
+          <h2 class="text-2xl font-semibold text-text-primary">{{ t('info.dependency.heading') }}</h2>
           <p class="text-sm text-text-secondary">
-            Follow the branches to see which structures unlock the next tier. Requirements shown as badges must also be met.
+            {{ t('info.dependency.description') }}
           </p>
         </div>
         <div class="grid gap-6 md:grid-cols-2">
@@ -318,7 +329,7 @@ const formatRequirement = (status: BuildingStatus) =>
             <summary class="tree-summary">
               <span class="tree-summary__icon">{{ root.icon }}</span>
               <span class="tree-summary__name">{{ root.name }}</span>
-              <span class="tree-summary__tag" v-if="root.children.length === 0">Standalone</span>
+              <span class="tree-summary__tag" v-if="root.children.length === 0">{{ t('info.dependency.standaloneTag') }}</span>
             </summary>
             <div v-if="root.children.length" class="tree-wrapper">
               <ul class="tree-root">
@@ -330,7 +341,7 @@ const formatRequirement = (status: BuildingStatus) =>
               </ul>
             </div>
             <p v-else class="mt-3 text-sm text-text-secondary/80">
-              This building has no dependent unlocks.
+              {{ t('info.dependency.empty') }}
             </p>
           </details>
         </div>

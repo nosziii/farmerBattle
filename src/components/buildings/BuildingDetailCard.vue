@@ -11,7 +11,7 @@
         </div>
         <div class="space-y-1">
           <p class="text-[11px] uppercase tracking-wide text-text-secondary/70">
-            {{ status.category }}
+            {{ translateCategory(status.category) }}
           </p>
           <h3 class="text-lg font-semibold text-text-primary">
             {{ status.name }}
@@ -22,7 +22,9 @@
         </div>
       </div>
       <div class="text-right">
-        <p class="text-xs uppercase tracking-wide text-text-secondary/70">Level</p>
+        <p class="text-xs uppercase tracking-wide text-text-secondary/70">
+          {{ t('components.buildingDetail.levelHeading') }}
+        </p>
         <p class="text-xl font-semibold text-text-primary">
           {{ status.level }} / {{ status.max_level }}
         </p>
@@ -31,7 +33,9 @@
 
     <section class="px-6 py-5 space-y-6">
       <div v-if="status.effects.length" class="space-y-2">
-        <p class="text-[11px] uppercase tracking-wide text-text-secondary/70">Effects</p>
+        <p class="text-[11px] uppercase tracking-wide text-text-secondary/70">
+          {{ t('components.buildingDetail.effectsHeading') }}
+        </p>
         <ul class="space-y-1 text-sm text-text-secondary">
           <li v-for="effect in status.effects" :key="effect" class="flex items-start gap-2">
             <span class="mt-[2px] text-primary">•</span>
@@ -41,7 +45,9 @@
       </div>
 
       <div v-if="status.requirements.length" class="space-y-2">
-        <p class="text-[11px] uppercase tracking-wide text-text-secondary/70">Requirements</p>
+        <p class="text-[11px] uppercase tracking-wide text-text-secondary/70">
+          {{ t('components.buildingDetail.requirementsHeading') }}
+        </p>
         <ul class="space-y-1 text-sm">
           <li
             v-for="requirement in status.requirements"
@@ -51,20 +57,28 @@
           >
             <span class="text-text-secondary">
               {{ requirement.display_name }}
-              <span class="text-text-secondary/70">Lv. {{ requirement.required_level }}</span>
+              <span class="text-text-secondary/70">
+                {{ t('components.buildingDetail.levelShort', { level: requirement.required_level }) }}
+              </span>
             </span>
             <span
               :class="requirement.met ? 'text-emerald-300' : 'text-red-400'"
               class="text-sm font-semibold"
             >
-              {{ requirement.met ? 'Ready' : `Lv. ${requirement.current_level}` }}
+              {{
+                requirement.met
+                  ? t('components.buildingDetail.requirementMet')
+                  : t('components.buildingDetail.levelShort', { level: requirement.current_level })
+              }}
             </span>
           </li>
         </ul>
       </div>
 
       <div v-if="status.unlocks.length" class="space-y-2">
-        <p class="text-[11px] uppercase tracking-wide text-text-secondary/70">Unlocks</p>
+        <p class="text-[11px] uppercase tracking-wide text-text-secondary/70">
+          {{ t('components.buildingDetail.unlocksHeading') }}
+        </p>
         <ul class="grid gap-1 text-sm text-text-secondary">
           <li v-for="unlock in status.unlocks" :key="unlock" class="flex items-start gap-2">
             <span class="text-primary">➤</span>
@@ -74,16 +88,18 @@
       </div>
 
       <div class="space-y-2">
-        <p class="text-[11px] uppercase tracking-wide text-text-secondary/70">Upgrade Details</p>
+        <p class="text-[11px] uppercase tracking-wide text-text-secondary/70">
+          {{ t('components.buildingDetail.detailsHeading') }}
+        </p>
         <div class="flex flex-wrap items-center gap-3 text-sm text-text-secondary">
           <span v-if="nextCostLabel" class="rounded-md bg-secondary-800/70 px-3 py-1 border border-secondary-700/40">
             {{ nextCostLabel }}
           </span>
           <span v-if="upgradeDurationLabel" class="rounded-md bg-secondary-800/70 px-3 py-1 border border-secondary-700/40">
-            Duration: {{ upgradeDurationLabel }}
+            {{ t('components.buildingDetail.duration', { duration: upgradeDurationLabel }) }}
           </span>
           <span v-if="status.is_upgrading" class="rounded-md bg-emerald-500/10 px-3 py-1 border border-emerald-500/30 text-emerald-200">
-            Ready in {{ remainingLabel }}
+            {{ t('components.buildingDetail.readyIn', { duration: remainingLabel }) }}
           </span>
         </div>
 
@@ -96,13 +112,13 @@
       </div>
 
       <p v-if="!status.next_cost || isMaxLevel" class="text-sm text-text-secondary">
-        Maximum level reached.
+        {{ t('components.buildingDetail.messages.maxLevel') }}
       </p>
       <p v-else-if="isLocked" class="text-sm text-red-300">
-        Requirements missing before the next upgrade.
+        {{ t('components.buildingDetail.messages.requirementsMissing') }}
       </p>
       <p v-else-if="!canAfford" class="text-sm text-amber-300">
-        Not enough resources for the next upgrade.
+        {{ t('components.buildingDetail.messages.notEnoughResources') }}
       </p>
 
       <button
@@ -123,6 +139,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { BuildingStatus } from '../../types/buildings';
+import { useI18n } from '../../i18n';
 
 const numberFormatter = new Intl.NumberFormat();
 
@@ -136,12 +153,20 @@ const emit = defineEmits<{
   (e: 'upgrade', building: string): void;
 }>();
 
+const { t } = useI18n();
+
 const formatNumber = (value: number) =>
   numberFormatter.format(Math.max(0, Math.floor(value || 0)));
 
+const translateCategory = (category: string) => {
+  const key = `build.categories.${category}`;
+  const translated = t(key, { category });
+  return translated === key ? category : translated;
+};
+
 const formatDuration = (seconds: number | null | undefined) => {
   if (!seconds || seconds <= 0) {
-    return 'Instant';
+    return t('common.duration.instant');
   }
   const mins = Math.floor(seconds / 60);
   const hrs = Math.floor(mins / 60);
@@ -149,12 +174,12 @@ const formatDuration = (seconds: number | null | undefined) => {
   const remSecs = seconds % 60;
 
   if (hrs > 0) {
-    return `${hrs}h ${remMins}m`;
+    return t('common.duration.hoursMinutes', { hours: hrs, minutes: remMins });
   }
   if (mins > 0) {
-    return `${mins}m ${remSecs}s`;
+    return t('common.duration.minutesSeconds', { minutes: mins, seconds: remSecs });
   }
-  return `${remSecs}s`;
+  return t('common.duration.seconds', { seconds: remSecs });
 };
 
 const remainingSeconds = computed(() => {
@@ -183,7 +208,14 @@ const nextCostLabel = computed(() => {
     return null;
   }
   const { wood, clay, iron } = props.status.next_cost;
-  return `Cost: ${formatNumber(wood)} Wood · ${formatNumber(clay)} Clay · ${formatNumber(iron)} Iron`;
+  return t('components.buildingDetail.cost', {
+    wood: formatNumber(wood),
+    woodLabel: t('build.resources.wood.title'),
+    clay: formatNumber(clay),
+    clayLabel: t('build.resources.clay.title'),
+    iron: formatNumber(iron),
+    ironLabel: t('build.resources.iron.title'),
+  });
 });
 
 const upgradeDurationLabel = computed(() =>
@@ -192,10 +224,10 @@ const upgradeDurationLabel = computed(() =>
 
 const remainingLabel = computed(() => {
   if (!props.status.is_upgrading) {
-    return 'Queueing';
+    return t('components.buildingDetail.queueing');
   }
   const value = remainingSeconds.value;
-  return value === null ? 'Soon' : formatDuration(value);
+  return value === null ? t('common.duration.soon') : formatDuration(value);
 });
 
 const isLocked = computed(() => props.status.requirements.some((req) => !req.met));
@@ -212,18 +244,20 @@ const isUpgradeDisabled = computed(() =>
 
 const buttonLabel = computed(() => {
   if (!props.status.next_cost || isMaxLevel.value) {
-    return 'Maximum level reached';
+    return t('components.buildingDetail.button.maxLevel');
   }
   if (props.status.is_upgrading) {
-    return 'Upgrade in progress';
+    return t('components.buildingDetail.button.inProgress');
   }
   if (isLocked.value) {
-    return 'Requirements missing';
+    return t('components.buildingDetail.button.requirementsMissing');
   }
   if (!props.canAfford) {
-    return 'Not enough resources';
+    return t('components.buildingDetail.button.notEnoughResources');
   }
-  return `Upgrade to level ${props.status.level + 1}`;
+  return t('components.buildingDetail.button.upgrade', {
+    level: props.status.level + 1,
+  });
 });
 
 function emitUpgrade() {

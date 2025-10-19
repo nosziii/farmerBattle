@@ -4,6 +4,7 @@ import axios from 'axios';
 
 import ResourceCard from '../components/ResourceCard.vue';
 import BuildingDetailCard from '../components/buildings/BuildingDetailCard.vue';
+import { useI18n } from '../i18n';
 
 import type { BuildingStatus, BuildingQueueItem } from '../types/buildings';
 import { ensureAuthReady } from '../services/auth';
@@ -42,6 +43,7 @@ const now = ref(Date.now());
 let ticker: number | null = null;
 let refreshHandle: number | null = null;
 const REFRESH_INTERVAL_MS = 5000;
+const { t } = useI18n();
 
 const parseServerDate = (value: string | null | undefined) => {
   if (!value) {
@@ -54,7 +56,7 @@ const parseServerDate = (value: string | null | undefined) => {
 
 const formatDuration = (seconds: number) => {
   if (seconds <= 0 || Number.isNaN(seconds)) {
-    return 'Soon';
+    return t('common.duration.soon');
   }
   const mins = Math.floor(seconds / 60);
   const hrs = Math.floor(mins / 60);
@@ -62,12 +64,12 @@ const formatDuration = (seconds: number) => {
   const remSecs = seconds % 60;
 
   if (hrs > 0) {
-    return `${hrs}h ${remMins}m`;
+    return t('common.duration.hoursMinutes', { hours: hrs, minutes: remMins });
   }
   if (mins > 0) {
-    return `${mins}m ${remSecs}s`;
+    return t('common.duration.minutesSeconds', { minutes: mins, seconds: remSecs });
   }
-  return `${remSecs}s`;
+  return t('common.duration.seconds', { seconds: remSecs });
 };
 
 const addNotification = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
@@ -130,38 +132,58 @@ const queueEntries = computed(() =>
 
 const resourceCards = computed(() => [
   {
-    title: 'Gold',
-    subtitle: 'Treasury',
+    id: 'gold',
+    title: t('build.resources.gold.title'),
+    subtitle: t('build.resources.gold.subtitle'),
     icon: '🪙',
     amount: resourceBalances.value.gold,
     capacity: resourceCapacities.value.gold || 1,
     production: productionRates.value.gold,
   },
   {
-    title: 'Wood',
-    subtitle: 'Timber reserves',
+    id: 'wood',
+    title: t('build.resources.wood.title'),
+    subtitle: t('build.resources.wood.subtitle'),
     icon: '🪵',
     amount: resourceBalances.value.wood,
     capacity: resourceCapacities.value.wood || 1,
     production: productionRates.value.wood,
   },
   {
-    title: 'Clay',
-    subtitle: 'Quarry output',
+    id: 'clay',
+    title: t('build.resources.clay.title'),
+    subtitle: t('build.resources.clay.subtitle'),
     icon: '🧱',
     amount: resourceBalances.value.clay,
     capacity: resourceCapacities.value.clay || 1,
     production: productionRates.value.clay,
   },
   {
-    title: 'Iron',
-    subtitle: 'Mine stockpile',
+    id: 'iron',
+    title: t('build.resources.iron.title'),
+    subtitle: t('build.resources.iron.subtitle'),
     icon: '⛏️',
     amount: resourceBalances.value.iron,
     capacity: resourceCapacities.value.iron || 1,
     production: productionRates.value.iron,
   },
 ]);
+
+const translateCategory = (category: string) => {
+  const key = `build.categories.${category}`;
+  const translated = t(key, { category });
+  return translated === key ? category : translated;
+};
+
+const formatBuildingCount = (count: number) =>
+  count === 1 ? t('build.groupCount.single', { count }) : t('build.groupCount.multi', { count });
+
+const formatQueueReadyLabel = (remainingSeconds: number, durationLabel: string) => {
+  if (remainingSeconds <= 0) {
+    return t('build.queue.readyNow');
+  }
+  return t('build.queue.readyIn', { duration: durationLabel });
+};
 
 const canAfford = (status: BuildingStatus) => {
   if (!status.next_cost) {
@@ -245,7 +267,7 @@ const fetchAll = async () => {
   try {
     await ensureActiveVillageId();
     if (!villageId.value) {
-      throw new Error('No active village available.');
+      throw new Error(t('common.errors.noActiveVillage'));
     }
     await Promise.all([
       fetchVillageResources(),
@@ -254,7 +276,7 @@ const fetchAll = async () => {
     ]);
   } catch (err: any) {
     console.error('Error loading building data:', err);
-    error.value = err.response?.data?.detail ?? 'Failed to load building overview.';
+    error.value = err.response?.data?.detail ?? t('build.errors.loadOverview');
   } finally {
     loading.value = false;
   }
@@ -262,7 +284,7 @@ const fetchAll = async () => {
 
 const handleUpgrade = async (buildingKey: string) => {
   if (!villageId.value) {
-    addNotification('No active village selected.', 'error');
+    addNotification(t('common.notifications.noActiveVillage'), 'error');
     return;
   }
   try {
@@ -273,7 +295,7 @@ const handleUpgrade = async (buildingKey: string) => {
     resourceBalances.value = data.resources;
     buildingQueue.value = data.queue ?? [];
     await fetchBuildingStatuses();
-    addNotification(data.message ?? 'Upgrade started!', 'success');
+    addNotification(data.message ?? t('build.notifications.upgradeStarted'), 'success');
     startAutoRefresh();
   } catch (err: any) {
     console.error(`Error upgrading ${buildingKey}:`, err);
@@ -281,7 +303,7 @@ const handleUpgrade = async (buildingKey: string) => {
     if (typeof detail === 'string') {
       addNotification(detail, 'error');
     } else {
-      addNotification('Unable to start this upgrade.', 'error');
+      addNotification(t('common.errors.upgradeFailed'), 'error');
     }
   }
 };
@@ -355,7 +377,7 @@ watch(
     <section class="grid gap-4 md:grid-cols-3" v-if="!loading">
       <ResourceCard
         v-for="card in resourceCards"
-        :key="card.title"
+        :key="card.id"
         :title="card.title"
         :subtitle="card.subtitle"
         :icon="card.icon"
@@ -366,7 +388,7 @@ watch(
     </section>
 
     <div v-if="loading" class="py-16 text-center text-text-secondary">
-      <p>Gathering blueprints...</p>
+      <p>{{ t('build.loading') }}</p>
     </div>
 
     <div v-else-if="error" class="rounded-xl border border-red-500/40 bg-red-500/10 px-6 py-4 text-red-200">
@@ -382,10 +404,10 @@ watch(
         >
           <div class="flex items-center justify-between">
             <h2 class="text-xl font-semibold text-text-primary">
-              {{ group.category }}
+              {{ translateCategory(group.category) }}
             </h2>
             <span class="text-xs uppercase tracking-wide text-text-secondary/70">
-              {{ group.items.length }} building{{ group.items.length === 1 ? '' : 's' }}
+              {{ formatBuildingCount(group.items.length) }}
             </span>
           </div>
           <div class="grid gap-5 md:grid-cols-2">
@@ -403,9 +425,9 @@ watch(
 
       <aside class="w-full lg:w-80 space-y-6">
         <div class="rounded-2xl border border-secondary-700/40 bg-secondary-900/60 p-5">
-          <h3 class="text-lg font-semibold text-text-primary mb-3">Queue</h3>
+          <h3 class="text-lg font-semibold text-text-primary mb-3">{{ t('build.queue.title') }}</h3>
           <p v-if="!queueEntries.length" class="text-sm text-text-secondary">
-            No ongoing upgrades. Your builders await orders.
+            {{ t('build.queue.empty') }}
           </p>
           <ul v-else class="space-y-3">
             <li
@@ -416,10 +438,10 @@ watch(
               <div class="flex items-start justify-between gap-3">
                 <div>
                   <p class="text-text-primary font-semibold">
-                    {{ entry.displayName }} → Lv. {{ entry.targetLevel }}
+                    {{ entry.displayName }} → {{ t('build.queue.level', { level: entry.targetLevel }) }}
                   </p>
                   <p class="text-xs text-text-secondary">
-                    Ready {{ entry.remainingSeconds <= 0 ? 'any moment' : `in ${entry.remainingLabel}` }}
+                    {{ formatQueueReadyLabel(entry.remainingSeconds, entry.remainingLabel) }}
                   </p>
                 </div>
                 <p class="text-xs text-text-secondary">

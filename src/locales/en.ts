@@ -19,6 +19,165 @@ const messages = {
     info: 'Info',
     admin: 'Admin',
   },
+  common: {
+    duration: {
+      soon: 'Soon',
+      done: 'Done',
+      hoursMinutes: '{hours}h {minutes}m',
+      minutesSeconds: '{minutes}m {seconds}s',
+      seconds: '{seconds}s',
+      anyMoment: 'any moment',
+      inDuration: 'in {duration}',
+      instant: 'Instant',
+    },
+    notifications: {
+      noActiveVillage: 'No active village selected.',
+    },
+    errors: {
+      noActiveVillage: 'No active village available.',
+      loadFailed: 'Failed to load data.',
+      upgradeFailed: 'Unable to start this upgrade.',
+    },
+    levelShort: 'Lv. {level}',
+    quantity: '{value}x',
+    unknown: 'Unknown',
+  },
+  components: {
+    buildingDetail: {
+      levelHeading: 'Level',
+      effectsHeading: 'Effects',
+      requirementsHeading: 'Requirements',
+      unlocksHeading: 'Unlocks',
+      detailsHeading: 'Upgrade Details',
+      duration: 'Duration: {duration}',
+      readyIn: 'Ready in {duration}',
+      queueing: 'Queueing',
+      cost: 'Cost: {wood} {woodLabel} · {clay} {clayLabel} · {iron} {ironLabel}',
+      levelShort: 'Lv. {level}',
+      requirementMet: 'Ready',
+      messages: {
+        maxLevel: 'Maximum level reached.',
+        requirementsMissing: 'Requirements missing before the next upgrade.',
+        notEnoughResources: 'Not enough resources for the next upgrade.',
+      },
+      button: {
+        maxLevel: 'Maximum level reached',
+        inProgress: 'Upgrade in progress',
+        requirementsMissing: 'Requirements missing',
+        notEnoughResources: 'Not enough resources',
+        upgrade: 'Upgrade to level {level}',
+      },
+    },
+    resourceCard: {
+      perHour: '/h',
+      max: 'Max: {value}',
+    },
+  },
+  info: {
+    hero: {
+      badge: 'Builder’s Handbook',
+      title: 'Plan your rise to a thriving kingdom',
+      description:
+        'Every structure you raise unlocks new opportunities. Use this guide to understand how buildings interact, which upgrades open new troops or technologies, and how to prioritise your development path.',
+    },
+    loading: 'Compiling building schematics...',
+    errors: {
+      load: 'We could not load the building handbook right now. Please try again shortly.',
+    },
+    groupCount: {
+      single: '{count} building',
+      multi: '{count} buildings',
+    },
+    levelProgress: 'Lv. {level}/{max}',
+    labels: {
+      effectsOnUpgrade: 'Effects when upgraded',
+    },
+    requirements: {
+      none: 'No prerequisites',
+    },
+    dependency: {
+      heading: 'Dependency Trees',
+      description:
+        'Follow the branches to see which structures unlock the next tier. Requirements shown as badges must also be met.',
+      standaloneTag: 'Standalone',
+      empty: 'This building has no dependent unlocks.',
+    },
+  },
+  village: {
+    header: {
+      title: 'Village Dashboard',
+      subtitle: 'Welcome back, Commander!',
+      playerName: 'Player Name',
+      playerLevel: 'Level 1',
+      avatarLabel: 'Player avatar',
+    },
+    sections: {
+      resources: 'Resources',
+      buildings: 'Buildings',
+      military: 'Military Overview',
+    },
+    resources: {
+      gold: { title: 'Gold', subtitle: 'Treasury' },
+      wood: { title: 'Wood', subtitle: 'Resource' },
+      clay: { title: 'Clay', subtitle: 'Resource' },
+      iron: { title: 'Iron', subtitle: 'Resource' },
+    },
+    buildingQueue: {
+      title: 'Construction Queue',
+      count: '{count} active',
+      empty: 'No buildings are currently being upgraded. Queue a project to keep your builders busy.',
+      finishesAt: 'Finishes at',
+    },
+    notifications: {
+      creatingVillage: 'Village not found, creating a new one...',
+      created: 'New village created!',
+      createError: 'Error creating village!',
+      fetchFailed: 'Failed to fetch village data.',
+      upgradeError: 'Error upgrading {building}.',
+      ensureActiveFailed: 'Failed to resolve active village.',
+      upgradeStartedCustom: '{building} upgrade started!',
+    },
+    military: {
+      readyTroops: {
+        title: 'Ready Troops',
+        loading: 'Loading troop counts...',
+        empty: 'No trained troops available. Visit the Barracks to start training your army.',
+      },
+      trainingQueue: {
+        title: 'Training Queue',
+        loading: 'Loading training queue...',
+        empty: 'No units are currently in training.',
+        finishesAt: 'Finishes at {time}',
+        remainingLabel: 'Remaining',
+        completed: 'Completed',
+      },
+    },
+    expeditions: {
+      title: 'Active Expeditions',
+      manageLink: 'Manage',
+      empty: 'No expeditions are travelling right now. Launch a raid from the Expeditions panel.',
+      distancePhase: 'Distance {distance} tiles • Phase: {phase}',
+      eta: 'ETA {eta}',
+      statusLabel: 'Status',
+      statusReturning: 'Returning',
+      statusTravelling: 'Travelling',
+      outboundLabel: 'Outbound',
+      returnLabel: 'Return',
+      departedAt: 'Departed {time}',
+      arrivalAt: 'Arrival {time}',
+      returnAt: 'Return {time}',
+    },
+  },
+  expeditions: {
+    phases: {
+      outbound: 'Outbound',
+      returning: 'Returning',
+      completed: 'Completed',
+    },
+    labels: {
+      arrived: 'Arrived',
+    },
+  },
   sidebar: {
     brand: {
       badge: 'alpha',
@@ -81,6 +240,39 @@ const messages = {
       level: 'Lv. {level}',
       settings: 'Settings',
       logout: 'Logout',
+    },
+  },
+  build: {
+    loading: 'Gathering blueprints...',
+    resources: {
+      gold: { title: 'Gold', subtitle: 'Treasury' },
+      wood: { title: 'Wood', subtitle: 'Timber reserves' },
+      clay: { title: 'Clay', subtitle: 'Quarry output' },
+      iron: { title: 'Iron', subtitle: 'Mine stockpile' },
+    },
+    groupCount: {
+      single: '{count} building',
+      multi: '{count} buildings',
+    },
+    queue: {
+      title: 'Queue',
+      empty: 'No ongoing upgrades. Your builders await orders.',
+      level: 'Lv. {level}',
+      readyNow: 'Ready any moment',
+      readyIn: 'Ready in {duration}',
+    },
+    notifications: {
+      upgradeStarted: 'Upgrade started!',
+    },
+    errors: {
+      loadOverview: 'Failed to load building overview.',
+    },
+    categories: {
+      economy: 'Economy',
+      military: 'Military',
+      storage: 'Storage',
+      special: 'Special',
+      production: 'Production',
     },
   },
   landing: {

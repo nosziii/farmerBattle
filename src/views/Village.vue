@@ -6,6 +6,7 @@ import BuildingCard from "../components/BuildingCard.vue";
 import axios from "axios";
 import { useWebSocket } from "../services/websocket";
 import { ensureAuthReady } from "../services/auth";
+import { useI18n } from "../i18n";
 import type {
   BuildingStatus,
   BuildingCost,
@@ -132,6 +133,7 @@ const buildingStatuses = ref<BuildingStatus[]>([]);
 const buildingQueue = ref<BuildingQueueItem[]>([]);
 
 const numberFormatter = new Intl.NumberFormat();
+const { t } = useI18n();
 let villagePoller: number | null = null;
 let trainingTicker: number | null = null;
 let detachSocket: (() => void) | null = null;
@@ -149,7 +151,7 @@ const formatNumber = (value: number) =>
 
 const formatDuration = (seconds: number) => {
   if (seconds <= 0 || Number.isNaN(seconds)) {
-    return "Done";
+    return t("common.duration.done");
   }
   const mins = Math.floor(seconds / 60);
   const hrs = Math.floor(mins / 60);
@@ -157,18 +159,18 @@ const formatDuration = (seconds: number) => {
   const remSecs = seconds % 60;
 
   if (hrs > 0) {
-    return `${hrs}h ${remMins}m`;
+    return t("common.duration.hoursMinutes", { hours: hrs, minutes: remMins });
   }
   if (mins > 0) {
-    return `${mins}m ${remSecs}s`;
+    return t("common.duration.minutesSeconds", { minutes: mins, seconds: remSecs });
   }
-  return `${remSecs}s`;
+  return t("common.duration.seconds", { seconds: remSecs });
 };
 
 const formatTimestamp = (value: string) => {
   const date = parseServerDate(value);
   if (!date) {
-    return "Unknown";
+    return t("common.unknown");
   }
   return date.toLocaleTimeString([], {
     hour: "2-digit",
@@ -180,32 +182,32 @@ const formatTimestamp = (value: string) => {
 const updateResourceCards = () => {
   resources.value = [
     {
-      title: "Gold",
-      subtitle: "Treasury",
+      title: t("village.resources.gold.title"),
+      subtitle: t("village.resources.gold.subtitle"),
       icon: "🪙",
       amount: resourceBalances.value.gold,
       capacity: resourceCapacities.value.gold,
       production: lastProductionRates.value.gold,
     },
     {
-      title: "Wood",
-      subtitle: "Resource",
+      title: t("village.resources.wood.title"),
+      subtitle: t("village.resources.wood.subtitle"),
       icon: "🪵",
       amount: resourceBalances.value.wood,
       capacity: resourceCapacities.value.wood,
       production: lastProductionRates.value.wood,
     },
     {
-      title: "Clay",
-      subtitle: "Resource",
+      title: t("village.resources.clay.title"),
+      subtitle: t("village.resources.clay.subtitle"),
       icon: "🧱",
       amount: resourceBalances.value.clay,
       capacity: resourceCapacities.value.clay,
       production: lastProductionRates.value.clay,
     },
     {
-      title: "Iron",
-      subtitle: "Resource",
+      title: t("village.resources.iron.title"),
+      subtitle: t("village.resources.iron.subtitle"),
       icon: "🔩",
       amount: resourceBalances.value.iron,
       capacity: resourceCapacities.value.iron,
@@ -300,13 +302,13 @@ const activeExpeditionsWithProgress = computed<ExpeditionProgressCard[]>(() => {
       const decorated = decorateExpedition(expedition, nowMs);
       const phaseLabel =
         decorated.currentPhase === "outbound"
-          ? "Outbound"
+          ? t("expeditions.phases.outbound")
           : decorated.currentPhase === "returning"
-          ? "Returning"
-          : "Completed";
+          ? t("expeditions.phases.returning")
+          : t("expeditions.phases.completed");
       const etaLabel =
         decorated.currentPhase === "completed"
-          ? "Arrived"
+          ? t("expeditions.labels.arrived")
           : formatExpeditionDuration(decorated.etaSeconds);
       return {
         ...decorated,
@@ -500,21 +502,21 @@ const fetchVillageData = async () => {
     await fetchBuildingStatuses();
   } catch (error: any) {
     if (error.response && error.response.status === 404) {
-      addNotification("Village not found, creating a new one...", "info");
+      addNotification(t("village.notifications.creatingVillage"), "info");
       try {
         const createResponse = await axios.post(`${API_BASE}/villages/`, {
           name: "My New Village",
         });
         const newId = createResponse.data.id;
         setActiveVillageId(newId);
-        addNotification("New village created!", "success");
+        addNotification(t("village.notifications.created"), "success");
         await fetchVillageData();
       } catch (createError) {
-        addNotification("Error creating village!", "error");
+        addNotification(t("village.notifications.createError"), "error");
         console.error("Error creating village:", createError);
       }
     } else {
-      addNotification("Failed to fetch village data.", "error");
+      addNotification(t("village.notifications.fetchFailed"), "error");
       console.error("Full error object:", JSON.stringify(error, null, 2));
     }
   }
@@ -581,7 +583,7 @@ const fetchExpeditionData = async () => {
 
 const handleUpgrade = async (buildingInternalName: string) => {
   if (!villageId.value) {
-    addNotification("No active village selected.", "error");
+    addNotification(t("common.notifications.noActiveVillage"), "error");
     return;
   }
   const status = buildingStatuses.value.find(
@@ -599,7 +601,7 @@ const handleUpgrade = async (buildingInternalName: string) => {
     updateResourceCards();
     await fetchBuildingStatuses();
     addNotification(
-      data.message ?? `${displayName} upgrade started!`,
+      data.message ?? t("village.notifications.upgradeStartedCustom", { building: displayName }),
       "success"
     );
   } catch (error: any) {
@@ -609,7 +611,7 @@ const handleUpgrade = async (buildingInternalName: string) => {
     } else if (detail?.message) {
       addNotification(detail.message as string, "error");
     } else {
-      addNotification(`Error upgrading ${displayName}.`, "error");
+      addNotification(t("village.notifications.upgradeError", { building: displayName }), "error");
     }
     console.error(`Error upgrading ${buildingInternalName}:`, error);
   }
@@ -683,7 +685,7 @@ onMounted(async () => {
   try {
     await ensureActiveVillageId();
   } catch (error) {
-    addNotification("Failed to resolve active village.", "error");
+    addNotification(t("village.notifications.ensureActiveFailed"), "error");
     console.error("Unable to ensure active village id:", error);
     return;
   }
@@ -745,21 +747,21 @@ onUnmounted(() => {
     <!-- Header -->
     <header class="flex justify-between items-center mb-8">
       <div>
-        <h2 class="text-4xl font-bold">Village Dashboard</h2>
-        <p class="text-text-secondary">Welcome back, Commander!</p>
+        <h2 class="text-4xl font-bold">{{ t('village.header.title') }}</h2>
+        <p class="text-text-secondary">{{ t('village.header.subtitle') }}</p>
       </div>
       <div class="flex items-center gap-4">
         <div class="text-right">
-          <p class="font-bold">Player Name</p>
-          <p class="text-sm text-text-secondary">Level 1</p>
+          <p class="font-bold">{{ t('village.header.playerName') }}</p>
+          <p class="text-sm text-text-secondary">{{ t('village.header.playerLevel') }}</p>
         </div>
-        <div class="w-12 h-12 bg-surface rounded-full"></div>
+        <div class="w-12 h-12 bg-surface rounded-full" :aria-label="t('village.header.avatarLabel')"></div>
       </div>
     </header>
 
     <!-- Resources -->
     <section class="mb-12">
-      <h3 class="text-2xl font-bold mb-4">Resources</h3>
+      <h3 class="text-2xl font-bold mb-4">{{ t('village.sections.resources') }}</h3>
       <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
         <ResourceCard
           v-for="resource in resources"
@@ -771,7 +773,7 @@ onUnmounted(() => {
 
     <!-- Buildings -->
     <section>
-      <h3 class="text-2xl font-bold mb-4">Buildings</h3>
+      <h3 class="text-2xl font-bold mb-4">{{ t('village.sections.buildings') }}</h3>
       <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
         <BuildingCard
           v-for="card in buildingCards"
@@ -784,13 +786,13 @@ onUnmounted(() => {
         class="mt-6 rounded-2xl border border-secondary/40 bg-surface/70 px-6 py-5 backdrop-blur"
       >
         <div class="flex items-center justify-between gap-4 mb-4">
-          <h4 class="text-xl font-semibold">Construction Queue</h4>
+          <h4 class="text-xl font-semibold">{{ t('village.buildingQueue.title') }}</h4>
           <span class="text-xs uppercase tracking-wide text-text-secondary/70">
-            {{ buildingQueueEntries.length }} active
+            {{ t('village.buildingQueue.count', { count: buildingQueueEntries.length }) }}
           </span>
         </div>
         <p v-if="!buildingQueueEntries.length" class="text-sm text-text-secondary">
-          No buildings are currently being upgraded. Queue a project to keep your builders busy.
+          {{ t('village.buildingQueue.empty') }}
         </p>
         <ul v-else class="space-y-4">
           <li
@@ -801,14 +803,20 @@ onUnmounted(() => {
             <div class="flex items-start justify-between gap-4">
               <div>
                 <p class="text-base font-semibold text-text-primary">
-                  {{ entry.displayName }} → Lv. {{ entry.targetLevel }}
+                  {{ entry.displayName }} → {{ t('common.levelShort', { level: entry.targetLevel }) }}
                 </p>
                 <p class="text-xs text-text-secondary">
-                  Ready {{ entry.remainingSeconds <= 0 ? 'any moment' : `in ${formatDuration(entry.remainingSeconds)}` }}
+                  {{
+                    entry.remainingSeconds <= 0
+                      ? t('common.duration.anyMoment')
+                      : t('common.duration.inDuration', { duration: formatDuration(entry.remainingSeconds) })
+                  }}
                 </p>
               </div>
               <div class="text-right">
-                <p class="text-[11px] uppercase tracking-wide text-text-secondary/60">Finishes at</p>
+                <p class="text-[11px] uppercase tracking-wide text-text-secondary/60">
+                  {{ t('village.buildingQueue.finishesAt') }}
+                </p>
                 <p class="text-sm font-medium text-text-primary">
                   {{ formatTimestamp(entry.finishAt) }}
                 </p>
@@ -827,24 +835,23 @@ onUnmounted(() => {
 
     <!-- Military Overview -->
     <section class="mt-12">
-      <h3 class="text-2xl font-bold mb-4">Military Overview</h3>
+      <h3 class="text-2xl font-bold mb-4">{{ t('village.sections.military') }}</h3>
       <div class="grid grid-cols-1 gap-6 md:grid-cols-2">
         <div
           class="rounded-2xl border border-secondary/40 bg-surface/70 p-6 backdrop-blur"
         >
-          <h4 class="text-xl font-semibold mb-3">Ready Troops</h4>
+          <h4 class="text-xl font-semibold mb-3">{{ t('village.military.readyTroops.title') }}</h4>
           <div
             v-if="loadingTroops"
             class="py-6 text-center text-text-secondary"
           >
-            Loading troop counts...
+            {{ t('village.military.readyTroops.loading') }}
           </div>
           <div
             v-else-if="!sortedReadyTroops.length"
             class="text-sm text-text-secondary"
           >
-            No trained troops available. Visit the Barracks to start training
-            your army.
+            {{ t('village.military.readyTroops.empty') }}
           </div>
           <ul v-else class="space-y-3">
             <li
@@ -862,18 +869,18 @@ onUnmounted(() => {
         <div
           class="rounded-2xl border border-secondary/40 bg-surface/70 p-6 backdrop-blur"
         >
-          <h4 class="text-xl font-semibold mb-3">Training Queue</h4>
+          <h4 class="text-xl font-semibold mb-3">{{ t('village.military.trainingQueue.title') }}</h4>
           <div
             v-if="loadingTrainingQueue"
             class="py-6 text-center text-text-secondary"
           >
-            Loading training queue...
+            {{ t('village.military.trainingQueue.loading') }}
           </div>
           <div
             v-else-if="!queueWithProgress.length"
             class="text-sm text-text-secondary"
           >
-            No units are currently in training.
+            {{ t('village.military.trainingQueue.empty') }}
           </div>
           <div v-else class="space-y-4">
             <div
@@ -884,18 +891,18 @@ onUnmounted(() => {
               <div class="flex items-start justify-between gap-4">
                 <div>
                   <p class="font-semibold">
-                    {{ item.quantity }}x {{ item.troop.name }}
+                    {{ t('common.quantity', { value: item.quantity }) }} {{ item.troop.name }}
                   </p>
                   <p class="text-xs text-text-secondary">
-                    Finishes at {{ formatTimestamp(item.end_time) }}
+                    {{ t('village.military.trainingQueue.finishesAt', { time: formatTimestamp(item.end_time) }) }}
                   </p>
                 </div>
                 <div class="text-right">
-                  <p class="text-xs text-text-secondary">Remaining</p>
+                  <p class="text-xs text-text-secondary">{{ t('village.military.trainingQueue.remainingLabel') }}</p>
                   <p class="text-base font-semibold">
                     {{
                       item.remainingSeconds <= 0
-                        ? "Completed"
+                        ? t('village.military.trainingQueue.completed')
                         : formatDuration(item.remainingSeconds)
                     }}
                   </p>
@@ -914,19 +921,19 @@ onUnmounted(() => {
           class="rounded-2xl border border-secondary/40 bg-surface/70 p-6 backdrop-blur md:col-span-2"
         >
           <div class="mb-4 flex items-center justify-between gap-4">
-            <h4 class="text-xl font-semibold">Active Expeditions</h4>
+            <h4 class="text-xl font-semibold">{{ t('village.expeditions.title') }}</h4>
             <RouterLink
               to="/expeditions"
               class="text-xs font-semibold uppercase tracking-wide text-primary hover:text-primary/80"
             >
-              Manage
+              {{ t('village.expeditions.manageLink') }}
             </RouterLink>
           </div>
           <div
             v-if="!activeExpeditionsWithProgress.length"
             class="text-sm text-text-secondary"
           >
-            No expeditions are travelling right now. Launch a raid from the Expeditions panel.
+            {{ t('village.expeditions.empty') }}
           </div>
           <ul v-else class="space-y-4">
             <li
@@ -940,22 +947,30 @@ onUnmounted(() => {
                     {{ entry.barbarian_name }}
                   </p>
                   <p class="text-xs text-text-secondary">
-                    Distance {{ entry.distance }} tiles • {{ entry.phaseLabel }} phase • ETA {{ entry.etaLabel }}
+                    {{ t('village.expeditions.distancePhase', {
+                      distance: entry.distance,
+                      phase: entry.phaseLabel,
+                    }) }}
+                    • {{ t('village.expeditions.eta', { eta: entry.etaLabel }) }}
                   </p>
                 </div>
                 <div class="text-right text-sm text-text-secondary">
                   <p class="text-[11px] uppercase tracking-wide text-text-secondary/60">
-                    Status
+                    {{ t('village.expeditions.statusLabel') }}
                   </p>
                   <p class="font-semibold text-text-primary">
-                    {{ entry.currentPhase === "returning" ? "Returning" : "Travelling" }}
+                    {{
+                      entry.currentPhase === "returning"
+                        ? t('village.expeditions.statusReturning')
+                        : t('village.expeditions.statusTravelling')
+                    }}
                   </p>
                 </div>
               </div>
               <div class="mt-3 space-y-2">
                 <div>
                   <div class="mb-1 flex items-center justify-between text-[11px] uppercase tracking-wide text-text-secondary/70">
-                    <span>Outbound</span>
+                    <span>{{ t('village.expeditions.outboundLabel') }}</span>
                     <span>{{ Math.round(entry.outboundProgress * 100) }}%</span>
                   </div>
                   <div class="h-2 w-full rounded-full bg-secondary/30">
@@ -969,7 +984,7 @@ onUnmounted(() => {
                   v-if="entry.currentPhase !== 'outbound' || entry.returnProgress > 0"
                 >
                   <div class="mb-1 flex items-center justify-between text-[11px] uppercase tracking-wide text-text-secondary/70">
-                    <span>Return</span>
+                    <span>{{ t('village.expeditions.returnLabel') }}</span>
                     <span>{{ Math.round(entry.returnProgress * 100) }}%</span>
                   </div>
                   <div class="h-2 w-full rounded-full bg-secondary/30">
@@ -981,9 +996,9 @@ onUnmounted(() => {
                 </div>
               </div>
               <div class="mt-3 grid gap-2 text-[11px] uppercase tracking-wide text-text-secondary/60 md:grid-cols-3">
-                <span>Departed {{ formatTimestamp(entry.departed_at ?? "") }}</span>
-                <span>Arrival {{ formatTimestamp(entry.arrive_at ?? "") }}</span>
-                <span>Return {{ formatTimestamp(entry.return_at ?? "") }}</span>
+                <span>{{ t('village.expeditions.departedAt', { time: formatTimestamp(entry.departed_at ?? "") }) }}</span>
+                <span>{{ t('village.expeditions.arrivalAt', { time: formatTimestamp(entry.arrive_at ?? "") }) }}</span>
+                <span>{{ t('village.expeditions.returnAt', { time: formatTimestamp(entry.return_at ?? "") }) }}</span>
               </div>
             </li>
           </ul>
