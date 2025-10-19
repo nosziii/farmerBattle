@@ -7,6 +7,7 @@ const props = defineProps<{
   k: string;
   to: string;
   compact?: boolean;
+  tooltip?: string;
 }>();
 </script>
 
@@ -14,7 +15,7 @@ const props = defineProps<{
   <RouterLink
     :to="props.to"
     class="relative inline-flex items-center gap-2 rounded-xl border px-3 py-2 transition group border-primary-800/50 bg-primary-900/20 hover:bg-primary-800/30 active:scale-[0.98] w-full min-w-0 overflow-hidden"
-    :title="`${props.label} (hotkey ${props.k})`"
+    :title="props.tooltip ?? `${props.label} (hotkey ${props.k})`"
   >
     <span class="text-lg shrink-0">{{ props.icon }}</span>
     <span

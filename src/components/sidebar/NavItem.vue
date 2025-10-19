@@ -33,6 +33,5 @@ const isActive = computed(
       class="ml-auto text-[10px] px-1.5 py-0.5 rounded-md bg-primary-700/70 border border-primary-600/70 shrink-0"
       >{{ props.badge }}</span
     >
-    >
   </RouterLink>
 </template>

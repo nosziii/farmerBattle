@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import axios from 'axios';
 import MapTile from '../components/MapTile.vue';
 import type { MapOverview, MapTile as MapTileSummary } from '../types/map';
 
+const router = useRouter();
 const loading = ref(true);
 const error = ref<string | null>(null);
 const overview = ref<MapOverview | null>(null);
@@ -74,6 +76,11 @@ const adjustTileSize = (delta: number) => {
 
 const resetTileSize = () => {
   tileSize.value = defaultTileSize;
+};
+
+const openExpeditionPlanner = (barbarianId: number | undefined) => {
+  if (!barbarianId) return;
+  router.push({ path: '/expeditions', query: { target: String(barbarianId) } });
 };
 
 const fetchMapData = async () => {
@@ -258,6 +265,13 @@ onMounted(fetchMapData);
             <p class="text-xs text-text-secondary">
               Barbarians grow based on the global growth schedule. Expect tougher battles over time.
             </p>
+            <button
+              type="button"
+              class="mt-3 w-full rounded-lg border border-primary/40 bg-primary/20 px-3 py-2 text-sm font-semibold text-primary-100 hover:bg-primary/30"
+              @click="openExpeditionPlanner(selectedTile.barbarian?.id)"
+            >
+              Prepare expedition
+            </button>
           </div>
 
           <div

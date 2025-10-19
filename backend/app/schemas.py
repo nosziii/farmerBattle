@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, UniqueConstraint, JSON
 from sqlalchemy.orm import relationship
 from .database import Base
 import datetime
@@ -62,6 +62,7 @@ class Village(Base):
         uselist=False,
         foreign_keys="WorldTile.player_village_id",
     )
+    expeditions = relationship("Expedition", back_populates="village")
 
 class Battle(Base):
     __tablename__ = "battles"
@@ -162,6 +163,7 @@ class BarbarianVillage(Base):
     last_level_up_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     tile = relationship("WorldTile", back_populates="barbarian_village", uselist=False)
+    expeditions = relationship("Expedition", back_populates="barbarian_village")
 
 
 class WorldTile(Base):
@@ -177,3 +179,29 @@ class WorldTile(Base):
     barbarian_village = relationship("BarbarianVillage", back_populates="tile", uselist=False, foreign_keys=[barbarian_village_id])
 
     __table_args__ = (UniqueConstraint("x", "y", name="uq_world_tiles_coordinates"),)
+
+
+class Expedition(Base):
+    __tablename__ = "expeditions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    village_id = Column(Integer, ForeignKey("villages.id"), nullable=False, index=True)
+    barbarian_village_id = Column(Integer, ForeignKey("barbarian_villages.id"), nullable=False, index=True)
+    status = Column(String, default="outbound", index=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    departed_at = Column(DateTime, default=datetime.datetime.utcnow)
+    arrive_at = Column(DateTime, nullable=False)
+    resolved_at = Column(DateTime, nullable=True)
+    return_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    travel_seconds = Column(Integer, default=0)
+    distance = Column(Integer, default=0)
+    success = Column(Boolean, default=False)
+    battle_report = Column(String, nullable=True)
+    loot = Column(JSON, default=dict)
+    troops_sent = Column(JSON, default=dict)
+    troops_returning = Column(JSON, default=dict)
+    casualties = Column(JSON, default=dict)
+
+    village = relationship("Village", back_populates="expeditions")
+    barbarian_village = relationship("BarbarianVillage", back_populates="expeditions")

@@ -1,10 +1,11 @@
 import asyncio
 import json
+import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .database import engine, Base, SessionLocal
-from .routers import village, buildings, leaderboard, map, battle, user, init, troops, admin, auth as auth_router
+from .routers import village, buildings, leaderboard, map, battle, user, init, troops, admin, expeditions, auth as auth_router
 from . import websocket
 from . import crud
 
@@ -36,6 +37,7 @@ app.include_router(battle.router, prefix="/api")
 app.include_router(user.router, prefix="/api")
 app.include_router(init.router, prefix="/api")
 app.include_router(troops.router, prefix="/api")
+app.include_router(expeditions.router, prefix="/api")
 app.include_router(admin.router, prefix="/api/admin")
 app.include_router(auth_router.router, prefix="")
 app.include_router(websocket.router)
@@ -104,6 +106,27 @@ async def process_barbarian_growth_task():
     finally:
         db.close()
 
+
+async def process_expedition_task():
+    db = SessionLocal()
+    try:
+        while True:
+            updated_villages, expedition_summaries = crud.process_expeditions(db)
+            for village_id in updated_villages:
+                await websocket.manager.broadcast(f"village:{village_id}:expedition_updated")
+            for summary in expedition_summaries:
+                payload = json.dumps(
+                    {
+                        "type": "expedition_update",
+                        "village_id": summary.village_id,
+                        "expedition": summary.model_dump(),
+                    }
+                )
+                await websocket.manager.broadcast(payload)
+            await asyncio.sleep(5)
+    finally:
+        db.close()
+
 @app.on_event("startup")
 async def startup_event():
     db = SessionLocal()
@@ -116,6 +139,7 @@ async def startup_event():
     asyncio.create_task(process_resource_generation_task())
     asyncio.create_task(process_building_queue_task())
     asyncio.create_task(process_barbarian_growth_task())
+    asyncio.create_task(process_expedition_task())
 
 @app.get("/")
 def read_root():

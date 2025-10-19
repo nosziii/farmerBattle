@@ -1,7 +1,11 @@
+from __future__ import annotations
+
 import os
 import datetime
 import random
-from typing import Dict, List, Optional
+import math
+
+from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy import func
@@ -22,6 +26,8 @@ from .config.troops import TROOP_DEFINITIONS
 
 RESOURCE_TICK_SECONDS = 5
 BARBARIAN_GROWTH_TICK_SECONDS = 60
+TRAVEL_SECONDS_PER_TILE = 60
+BASE_TRAVEL_SPEED = 12
 
 pwd_context = CryptContext(
     schemes=["bcrypt"],
@@ -644,6 +650,67 @@ def _validate_troop_values(values: Dict[str, Optional[int]]) -> None:
             )
 
 
+def _normalize_troop_payload(items: Dict[str, int] | None) -> Dict[int, int]:
+    if not items:
+        return {}
+    normalized: Dict[int, int] = {}
+    for key, value in items.items():
+        try:
+            troop_id = int(key)
+        except (TypeError, ValueError):
+            continue
+        normalized[troop_id] = int(value)
+    return normalized
+
+
+def _serialize_expedition(
+    expedition: schemas.Expedition,
+    troop_cache: Dict[int, schemas.Troop],
+) -> models.ExpeditionSummary:
+    barbarian = expedition.barbarian_village
+    barbarian_name = barbarian.name if barbarian else "Unknown"
+    barbarian_level = barbarian.level if barbarian else 0
+
+    sent = _normalize_troop_payload(expedition.troops_sent)
+    returning = _normalize_troop_payload(expedition.troops_returning)
+    casualties = _normalize_troop_payload(expedition.casualties)
+
+    troop_summaries: List[models.ExpeditionTroopSummary] = []
+    for troop_id, quantity in sent.items():
+        troop = troop_cache.get(troop_id)
+        troop_name = troop.name if troop else f"Troop {troop_id}"
+        troop_summaries.append(
+            models.ExpeditionTroopSummary(
+                troop_id=troop_id,
+                name=troop_name,
+                sent=quantity,
+                returning=returning.get(troop_id, 0),
+                casualties=casualties.get(troop_id, 0),
+            )
+        )
+
+    return models.ExpeditionSummary(
+        id=expedition.id,
+        village_id=expedition.village_id,
+        barbarian_village_id=expedition.barbarian_village_id,
+        barbarian_name=barbarian_name,
+        barbarian_level=barbarian_level,
+        status=expedition.status,
+        success=bool(expedition.success),
+        distance=expedition.distance,
+        travel_seconds=expedition.travel_seconds,
+        created_at=expedition.created_at,
+        departed_at=expedition.departed_at,
+        arrive_at=expedition.arrive_at,
+        resolved_at=expedition.resolved_at,
+        return_at=expedition.return_at,
+        completed_at=expedition.completed_at,
+        loot=expedition.loot or {},
+        troops=troop_summaries,
+        battle_report=expedition.battle_report,
+    )
+
+
 def get_troop_availability(db: Session, village_id: int) -> List[models.TroopAvailability]:
     village = get_village(db, village_id)
     if not village:
@@ -687,6 +754,414 @@ def get_troop_availability(db: Session, village_id: int) -> List[models.TroopAva
         )
 
     return results
+
+
+def _calculate_travel_seconds(distance: int, troop_speeds: List[int]) -> int:
+    if distance <= 0:
+        distance = 1
+    if not troop_speeds:
+        troop_speeds = [BASE_TRAVEL_SPEED]
+    slowest_speed = max(1, min(troop_speeds))
+    modifier = BASE_TRAVEL_SPEED / slowest_speed
+    return max(60, int(math.ceil(distance * TRAVEL_SECONDS_PER_TILE * modifier)))
+
+
+def _add_loot_to_village(village: schemas.Village, loot: Dict[str, float]) -> None:
+    if not loot:
+        return
+    capacities = calculate_resource_capacities(village)
+    village.wood = min(capacities["wood"], village.wood + loot.get("wood", 0))
+    village.clay = min(capacities["clay"], village.clay + loot.get("clay", 0))
+    village.iron = min(capacities["iron"], village.iron + loot.get("iron", 0))
+    village.gold = min(capacities["gold"], village.gold + loot.get("gold", 0))
+
+
+def _build_troop_cache(db: Session) -> Dict[int, schemas.Troop]:
+    return {troop.id: troop for troop in get_troops(db)}
+
+
+def get_barbarian_village_detail(db: Session, barbarian_id: int) -> models.BarbarianVillageDetail:
+    barbarian = (
+        db.query(schemas.BarbarianVillage)
+        .options(selectinload(schemas.BarbarianVillage.tile))
+        .filter(schemas.BarbarianVillage.id == barbarian_id)
+        .first()
+    )
+    if not barbarian or barbarian.tile is None:
+        raise HTTPException(status_code=404, detail="Barbarian village not found")
+
+    return models.BarbarianVillageDetail(
+        id=barbarian.id,
+        name=barbarian.name,
+        level=barbarian.level,
+        warriors=barbarian.warriors,
+        x=barbarian.tile.x,
+        y=barbarian.tile.y,
+    )
+
+
+def list_expeditions(
+    db: Session,
+    village_id: int,
+    status_filter: Optional[str] = None,
+) -> models.ExpeditionListResponse:
+    query = (
+        db.query(schemas.Expedition)
+        .options(
+            selectinload(schemas.Expedition.barbarian_village).selectinload(schemas.BarbarianVillage.tile),
+            selectinload(schemas.Expedition.village),
+        )
+        .filter(schemas.Expedition.village_id == village_id)
+        .order_by(schemas.Expedition.created_at.desc())
+    )
+
+    if status_filter == "active":
+        query = query.filter(schemas.Expedition.status.in_(["outbound", "returning"]))
+    elif status_filter == "completed":
+        query = query.filter(schemas.Expedition.status == "completed")
+
+    expeditions = query.all()
+    troop_cache = _build_troop_cache(db)
+
+    active: List[models.ExpeditionSummary] = []
+    completed: List[models.ExpeditionSummary] = []
+
+    for expedition in expeditions:
+        summary = _serialize_expedition(expedition, troop_cache)
+        if expedition.status in ("outbound", "returning"):
+            active.append(summary)
+        else:
+            completed.append(summary)
+
+    return models.ExpeditionListResponse(active=active, completed=completed)
+
+
+def _validate_expedition_orders(
+    orders: List[models.ExpeditionTroopOrder],
+    availability: Dict[int, models.TroopAvailability],
+) -> Dict[int, int]:
+    if not orders:
+        raise HTTPException(status_code=400, detail="Select at least one unit to send on the expedition.")
+
+    troop_counts: Dict[int, int] = {}
+    for order in orders:
+        if order.quantity <= 0:
+            raise HTTPException(status_code=400, detail="Troop quantities must be positive")
+        availability_entry = availability.get(order.troop_id)
+        if not availability_entry:
+            raise HTTPException(status_code=404, detail=f"Troop with id {order.troop_id} unavailable")
+        if not availability_entry.available:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "requirements_not_met",
+                    "message": f"{availability_entry.name} is locked. Upgrade the required buildings first.",
+                    "missing": [req.model_dump() for req in availability_entry.missing_requirements],
+                },
+            )
+        troop_counts[order.troop_id] = troop_counts.get(order.troop_id, 0) + order.quantity
+
+    return troop_counts
+
+
+def create_expedition(
+    db: Session,
+    village_id: int,
+    payload: models.ExpeditionCreate,
+    current_user: schemas.User,
+) -> models.ExpeditionSummary:
+    village = (
+        db.query(schemas.Village)
+        .options(selectinload(schemas.Village.world_tile))
+        .filter(schemas.Village.id == village_id)
+        .first()
+    )
+    if not village:
+        raise HTTPException(status_code=404, detail="Village not found")
+
+    if village.user_id != current_user.id and not getattr(current_user, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Not authorised to launch expeditions from this village")
+
+    if village.world_tile is None:
+        raise HTTPException(status_code=400, detail="Village is not placed on the world map yet")
+
+    barbarian = (
+        db.query(schemas.BarbarianVillage)
+        .options(selectinload(schemas.BarbarianVillage.tile))
+        .filter(schemas.BarbarianVillage.id == payload.barbarian_village_id)
+        .first()
+    )
+    if not barbarian or barbarian.tile is None:
+        raise HTTPException(status_code=404, detail="Target barbarian village not found")
+
+    availability = {
+        entry.id: entry for entry in get_troop_availability(db, village_id)
+    }
+    troop_orders = _validate_expedition_orders(payload.troops, availability)
+
+    # Ensure garrison has the requested troops and gather stats
+    troop_entities = (
+        db.query(schemas.Troop)
+        .filter(schemas.Troop.id.in_(troop_orders.keys()))
+        .all()
+    )
+    troop_cache = {troop.id: troop for troop in troop_entities}
+
+    if len(troop_cache) != len(troop_orders):
+        raise HTTPException(status_code=404, detail="One or more troop types are missing.")
+
+    # Deduct troops from the garrison
+    for troop_id, quantity in troop_orders.items():
+        garrison = (
+            db.query(schemas.VillageTroop)
+            .filter(
+                schemas.VillageTroop.village_id == village_id,
+                schemas.VillageTroop.troop_id == troop_id,
+            )
+            .with_for_update()
+            .first()
+        )
+        if not garrison or garrison.quantity < quantity:
+            raise HTTPException(status_code=400, detail=f"Not enough {troop_cache[troop_id].name} available")
+        garrison.quantity -= quantity
+        if garrison.quantity <= 0:
+            db.delete(garrison)
+
+    village_tile = village.world_tile
+    barbarian_tile = barbarian.tile
+    distance = abs(village_tile.x - barbarian_tile.x) + abs(village_tile.y - barbarian_tile.y)
+    travel_seconds = _calculate_travel_seconds(
+        distance,
+        [troop_cache[troop_id].speed for troop_id in troop_orders.keys()],
+    )
+
+    now = datetime.datetime.utcnow()
+    arrive_at = now + datetime.timedelta(seconds=travel_seconds)
+    return_at = arrive_at + datetime.timedelta(seconds=travel_seconds)
+
+    expedition = schemas.Expedition(
+        village_id=village_id,
+        barbarian_village_id=barbarian.id,
+        status="outbound",
+        created_at=now,
+        departed_at=now,
+        arrive_at=arrive_at,
+        return_at=return_at,
+        travel_seconds=travel_seconds,
+        distance=distance,
+        troops_sent={str(troop_id): quantity for troop_id, quantity in troop_orders.items()},
+        troops_returning={},
+        casualties={},
+        loot={"wood": 0, "clay": 0, "iron": 0, "gold": 0},
+    )
+
+    db.add(expedition)
+    db.commit()
+    db.refresh(expedition)
+
+    troop_cache = _build_troop_cache(db)
+    summary = _serialize_expedition(expedition, troop_cache)
+    return summary
+
+
+def get_expedition(db: Session, expedition_id: int, current_user: schemas.User) -> models.ExpeditionSummary:
+    expedition = (
+        db.query(schemas.Expedition)
+        .options(
+            selectinload(schemas.Expedition.barbarian_village).selectinload(schemas.BarbarianVillage.tile),
+            selectinload(schemas.Expedition.village),
+        )
+        .filter(schemas.Expedition.id == expedition_id)
+        .first()
+    )
+    if not expedition:
+        raise HTTPException(status_code=404, detail="Expedition not found")
+
+    if expedition.village and expedition.village.user_id != current_user.id and not getattr(current_user, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Not authorised to view this expedition")
+
+    troop_cache = _build_troop_cache(db)
+    return _serialize_expedition(expedition, troop_cache)
+
+
+def _resolve_expedition_battle(db: Session, expedition: schemas.Expedition, now: datetime.datetime) -> None:
+    troops_sent = _normalize_troop_payload(expedition.troops_sent)
+    troop_entities = (
+        db.query(schemas.Troop)
+        .filter(schemas.Troop.id.in_(troops_sent.keys()))
+        .all()
+    )
+    troop_cache = {troop.id: troop for troop in troop_entities}
+
+    attack_power = 0
+    carry_capacity = 0
+    troop_speeds: List[int] = []
+
+    for troop_id, quantity in troops_sent.items():
+        troop = troop_cache.get(troop_id)
+        if not troop or quantity <= 0:
+            continue
+        attack_power += troop.attack * quantity
+        carry_capacity += troop.carry_capacity * quantity
+        troop_speeds.append(max(1, troop.speed))
+
+    barbarian = expedition.barbarian_village
+    defenders = barbarian.warriors if barbarian else 0
+    barbarian_level = barbarian.level if barbarian else 1
+    defense_power = defenders * (5 + barbarian_level * 2)
+
+    success = attack_power > 0 and attack_power >= defense_power
+    losses: Dict[int, int] = {}
+    returning: Dict[int, int] = {}
+
+    if success:
+        loss_ratio = 0.0
+        if defense_power > 0 and attack_power > 0:
+            loss_ratio = min(0.6, (defense_power / attack_power) * 0.4)
+        for troop_id, quantity in troops_sent.items():
+            troop = troop_cache.get(troop_id)
+            if not troop or quantity <= 0:
+                continue
+            survivors = max(0, int(round(quantity * (1 - loss_ratio))))
+            if survivors == 0 and quantity > 0 and loss_ratio < 1:
+                survivors = 1
+            returning[troop_id] = survivors
+            losses[troop_id] = quantity - survivors
+    else:
+        for troop_id, quantity in troops_sent.items():
+            returning[troop_id] = 0
+            losses[troop_id] = quantity
+
+    loot = {"wood": 0.0, "clay": 0.0, "iron": 0.0, "gold": 0.0}
+    battle_report: Optional[str] = None
+
+    if success and barbarian:
+        returning_capacity = sum(
+            troop_cache[troop_id].carry_capacity * returning.get(troop_id, 0)
+            for troop_id in returning
+            if troop_id in troop_cache
+        )
+        available_loot = barbarian.warriors * (5 + barbarian.level * 3)
+        loot_total = min(available_loot, returning_capacity)
+        if loot_total > 0:
+            share = loot_total / 3
+            loot = {
+                "wood": round(share, 2),
+                "clay": round(share, 2),
+                "iron": round(loot_total - 2 * share, 2),
+                "gold": 0.0,
+            }
+        warrior_losses = min(barbarian.warriors, max(1, int(attack_power / 10)))
+        barbarian.warriors = max(0, barbarian.warriors - warrior_losses)
+        battle_report = (
+            f"Successfully raided {barbarian.name} (Lv.{barbarian.level}) and brought home {int(loot['wood'] + loot['clay'] + loot['iron'])} resources."
+        )
+    elif not success and barbarian:
+        warrior_losses = min(barbarian.warriors, max(0, int(attack_power / 20)))
+        barbarian.warriors = max(0, barbarian.warriors - warrior_losses)
+        battle_report = f"Expedition to {barbarian.name} failed. All troops were lost."
+    else:
+        battle_report = "Expedition failed."
+
+    expedition.success = success
+    expedition.loot = loot
+    expedition.troops_returning = {str(k): v for k, v in returning.items()}
+    expedition.casualties = {str(k): v for k, v in losses.items()}
+    expedition.resolved_at = now
+    expedition.battle_report = battle_report
+
+    if success:
+        expedition.status = "returning"
+        expedition.return_at = now + datetime.timedelta(seconds=expedition.travel_seconds)
+    else:
+        expedition.status = "completed"
+        expedition.completed_at = now
+        expedition.return_at = now
+
+
+def _finalise_returning_expedition(db: Session, expedition: schemas.Expedition, now: datetime.datetime) -> None:
+    village = expedition.village
+    if not village:
+        village = db.query(schemas.Village).filter(schemas.Village.id == expedition.village_id).first()
+    if not village:
+        return
+
+    returning = _normalize_troop_payload(expedition.troops_returning)
+    for troop_id, quantity in returning.items():
+        if quantity <= 0:
+            continue
+        garrison = (
+            db.query(schemas.VillageTroop)
+            .filter(
+                schemas.VillageTroop.village_id == expedition.village_id,
+                schemas.VillageTroop.troop_id == troop_id,
+            )
+            .first()
+        )
+        if garrison:
+            garrison.quantity += quantity
+        else:
+            db.add(
+                schemas.VillageTroop(
+                    village_id=expedition.village_id,
+                    troop_id=troop_id,
+                    quantity=quantity,
+                )
+            )
+
+    if expedition.loot:
+        _add_loot_to_village(village, expedition.loot)
+
+    expedition.status = "completed"
+    expedition.completed_at = now
+
+
+def process_expeditions(db: Session) -> Tuple[List[int], List[models.ExpeditionSummary]]:
+    now = datetime.datetime.utcnow()
+    updated_villages: set[int] = set()
+
+    outbound = (
+        db.query(schemas.Expedition)
+        .options(selectinload(schemas.Expedition.barbarian_village))
+        .filter(
+            schemas.Expedition.status == "outbound",
+            schemas.Expedition.arrive_at <= now,
+        )
+        .all()
+    )
+
+    changed_expeditions: List[schemas.Expedition] = []
+
+    for expedition in outbound:
+        _resolve_expedition_battle(db, expedition, now)
+        updated_villages.add(expedition.village_id)
+        changed_expeditions.append(expedition)
+
+    returning = (
+        db.query(schemas.Expedition)
+        .options(selectinload(schemas.Expedition.village))
+        .filter(
+            schemas.Expedition.status == "returning",
+            schemas.Expedition.return_at <= now,
+        )
+        .all()
+    )
+
+    for expedition in returning:
+        _finalise_returning_expedition(db, expedition, now)
+        updated_villages.add(expedition.village_id)
+        changed_expeditions.append(expedition)
+
+    if changed_expeditions:
+        db.commit()
+
+    troop_cache = _build_troop_cache(db) if changed_expeditions else {}
+    summaries = [
+        _serialize_expedition(expedition, troop_cache if troop_cache else _build_troop_cache(db))
+        for expedition in changed_expeditions
+    ]
+
+    return list(updated_villages), summaries
 
 def train_troops(db: Session, village_id: int, troops: List[models.VillageTroopCreate]):
     village = get_village(db, village_id)

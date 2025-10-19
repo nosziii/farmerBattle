@@ -124,6 +124,54 @@ class TroopAvailability(Troop):
     available: bool
     missing_requirements: List[BuildingRequirementStatus] = []
 
+
+class ExpeditionTroopOrder(BaseModel):
+    troop_id: int
+    quantity: int
+
+
+class ExpeditionCreate(BaseModel):
+    barbarian_village_id: int
+    troops: List[ExpeditionTroopOrder]
+
+
+class ExpeditionTroopSummary(BaseModel):
+    troop_id: int
+    name: str
+    sent: int
+    returning: int
+    casualties: int
+
+
+class ExpeditionSummary(BaseModel):
+    id: int
+    village_id: int
+    barbarian_village_id: int
+    barbarian_name: str
+    barbarian_level: int
+    status: Literal['outbound', 'returning', 'completed']
+    success: bool
+    distance: int
+    travel_seconds: int
+    created_at: datetime.datetime
+    departed_at: datetime.datetime
+    arrive_at: datetime.datetime
+    resolved_at: Optional[datetime.datetime] = None
+    return_at: Optional[datetime.datetime] = None
+    completed_at: Optional[datetime.datetime] = None
+    loot: Dict[str, float]
+    troops: List['ExpeditionTroopSummary']
+    battle_report: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ExpeditionListResponse(BaseModel):
+    active: List[ExpeditionSummary]
+    completed: List[ExpeditionSummary]
+
+
+ExpeditionSummary.model_rebuild()
+
 class VillageTroopBase(BaseModel):
     troop_id: int
     quantity: int
@@ -231,6 +279,16 @@ class MapOverview(BaseModel):
     width: int
     height: int
     tiles: List[MapTile]
+
+
+class BarbarianVillageDetail(BaseModel):
+    id: int
+    name: str
+    level: int
+    warriors: int
+    x: int
+    y: int
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AdminUser(BaseModel):

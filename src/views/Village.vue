@@ -11,6 +11,8 @@ import type {
   BuildingCost,
   BuildingQueueItem,
 } from "../types/buildings";
+import type { ExpeditionListResponse, ExpeditionSummary } from "../types/expeditions";
+import { decorateExpedition, formatDuration as formatExpeditionDuration, type ExpeditionWithProgress } from "../utils/expeditions";
 import {
   API_BASE,
   activeVillageId,
@@ -109,6 +111,7 @@ const villageId = activeVillageId;
 const notifications = ref<any[]>([]);
 const trainedTroops = ref<VillageTroopEntry[]>([]);
 const trainingQueue = ref<TrainingQueueItem[]>([]);
+const expeditions = ref<ExpeditionSummary[]>([]);
 const loadingTroops = ref(true);
 const loadingTrainingQueue = ref(true);
 const now = ref(Date.now());
@@ -270,6 +273,50 @@ const buildingQueueEntries = computed(() =>
       };
     })
 );
+
+type ExpeditionProgressCard = ExpeditionWithProgress & {
+  phaseLabel: string;
+  etaLabel: string;
+};
+
+const getExpeditionTargetTime = (entry: ExpeditionWithProgress) => {
+  if (entry.currentPhase === "outbound") {
+    return parseServerDate(entry.arrive_at)?.getTime() ?? Number.POSITIVE_INFINITY;
+  }
+  if (entry.currentPhase === "returning") {
+    return parseServerDate(entry.return_at)?.getTime() ?? Number.POSITIVE_INFINITY;
+  }
+  return Number.POSITIVE_INFINITY;
+};
+
+const activeExpeditionsWithProgress = computed<ExpeditionProgressCard[]>(() => {
+  const nowMs = now.value;
+  return expeditions.value
+    .filter(
+      (expedition) =>
+        expedition.status === "outbound" || expedition.status === "returning"
+    )
+    .map((expedition) => {
+      const decorated = decorateExpedition(expedition, nowMs);
+      const phaseLabel =
+        decorated.currentPhase === "outbound"
+          ? "Outbound"
+          : decorated.currentPhase === "returning"
+          ? "Returning"
+          : "Completed";
+      const etaLabel =
+        decorated.currentPhase === "completed"
+          ? "Arrived"
+          : formatExpeditionDuration(decorated.etaSeconds);
+      return {
+        ...decorated,
+        phaseLabel,
+        etaLabel,
+      };
+    })
+    .sort((a, b) => getExpeditionTargetTime(a) - getExpeditionTargetTime(b))
+    .slice(0, 3);
+});
 
 const BUILDING_METADATA: Record<
   string,
@@ -522,6 +569,16 @@ const refreshMilitaryData = async (showLoader = true) => {
   ]);
 };
 
+const fetchExpeditionData = async () => {
+  if (!villageId.value) return;
+  try {
+    const { data } = await axios.get<ExpeditionListResponse>(`${API_BASE}/villages/${villageId.value}/expeditions`);
+    expeditions.value = [...data.active, ...data.completed];
+  } catch (error) {
+    console.error("Error fetching expeditions", error);
+  }
+};
+
 const handleUpgrade = async (buildingInternalName: string) => {
   if (!villageId.value) {
     addNotification("No active village selected.", "error");
@@ -575,11 +632,20 @@ const handleSocketMessage = (event: MessageEvent) => {
     refreshMilitaryData(false);
     return;
   }
+  if (message === `village:${currentId}:expedition_updated`) {
+    fetchExpeditionData();
+    return;
+  }
 
   try {
     const payload = JSON.parse(message) as
       | ResourceUpdatePayload
-      | BuildingUpgradeFinishedPayload;
+      | BuildingUpgradeFinishedPayload
+      | {
+          type: "expedition_update";
+          village_id: number;
+          expedition: ExpeditionSummary;
+        };
     if (
       payload.type === "resources_updated" &&
       payload.village_id === currentId
@@ -592,6 +658,18 @@ const handleSocketMessage = (event: MessageEvent) => {
       payload.village_id === currentId
     ) {
       fetchVillageData();
+      return;
+    }
+    if (
+      payload.type === "expedition_update" &&
+      payload.village_id === currentId &&
+      payload.expedition
+    ) {
+      const summary = payload.expedition;
+      expeditions.value = [
+        summary,
+        ...expeditions.value.filter((entry) => entry.id !== summary.id),
+      ];
     }
   } catch {
     // Ignore non-JSON payloads
@@ -616,6 +694,7 @@ onMounted(async () => {
 
   await fetchVillageData();
   await refreshMilitaryData();
+  await fetchExpeditionData();
 
   connect(villageId.value.toString());
   detachSocket = onMessage(handleSocketMessage);
@@ -623,6 +702,7 @@ onMounted(async () => {
   villagePoller = window.setInterval(() => {
     fetchVillageData();
     refreshMilitaryData(false);
+    fetchExpeditionData();
   }, 10000);
 
   trainingTicker = window.setInterval(() => {
@@ -634,12 +714,13 @@ watch(
   activeVillageId,
   async (newId, oldId) => {
     if (!newId || newId === oldId) {
-      return;
-    }
-    await fetchVillageData();
-    await refreshMilitaryData();
-    connect(newId.toString());
+    return;
   }
+  await fetchVillageData();
+  await refreshMilitaryData();
+  await fetchExpeditionData();
+  connect(newId.toString());
+}
 );
 
 onUnmounted(() => {
@@ -828,6 +909,84 @@ onUnmounted(() => {
               </div>
             </div>
           </div>
+        </div>
+        <div
+          class="rounded-2xl border border-secondary/40 bg-surface/70 p-6 backdrop-blur md:col-span-2"
+        >
+          <div class="mb-4 flex items-center justify-between gap-4">
+            <h4 class="text-xl font-semibold">Active Expeditions</h4>
+            <RouterLink
+              to="/expeditions"
+              class="text-xs font-semibold uppercase tracking-wide text-primary hover:text-primary/80"
+            >
+              Manage
+            </RouterLink>
+          </div>
+          <div
+            v-if="!activeExpeditionsWithProgress.length"
+            class="text-sm text-text-secondary"
+          >
+            No expeditions are travelling right now. Launch a raid from the Expeditions panel.
+          </div>
+          <ul v-else class="space-y-4">
+            <li
+              v-for="entry in activeExpeditionsWithProgress"
+              :key="entry.id"
+              class="rounded-xl border border-secondary/30 bg-background/60 px-4 py-3"
+            >
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <p class="text-base font-semibold text-text-primary">
+                    {{ entry.barbarian_name }}
+                  </p>
+                  <p class="text-xs text-text-secondary">
+                    Distance {{ entry.distance }} tiles • {{ entry.phaseLabel }} phase • ETA {{ entry.etaLabel }}
+                  </p>
+                </div>
+                <div class="text-right text-sm text-text-secondary">
+                  <p class="text-[11px] uppercase tracking-wide text-text-secondary/60">
+                    Status
+                  </p>
+                  <p class="font-semibold text-text-primary">
+                    {{ entry.currentPhase === "returning" ? "Returning" : "Travelling" }}
+                  </p>
+                </div>
+              </div>
+              <div class="mt-3 space-y-2">
+                <div>
+                  <div class="mb-1 flex items-center justify-between text-[11px] uppercase tracking-wide text-text-secondary/70">
+                    <span>Outbound</span>
+                    <span>{{ Math.round(entry.outboundProgress * 100) }}%</span>
+                  </div>
+                  <div class="h-2 w-full rounded-full bg-secondary/30">
+                    <div
+                      class="h-full rounded-full bg-primary transition-[width]"
+                      :style="{ width: `${Math.round(entry.outboundProgress * 100)}%` }"
+                    ></div>
+                  </div>
+                </div>
+                <div
+                  v-if="entry.currentPhase !== 'outbound' || entry.returnProgress > 0"
+                >
+                  <div class="mb-1 flex items-center justify-between text-[11px] uppercase tracking-wide text-text-secondary/70">
+                    <span>Return</span>
+                    <span>{{ Math.round(entry.returnProgress * 100) }}%</span>
+                  </div>
+                  <div class="h-2 w-full rounded-full bg-secondary/30">
+                    <div
+                      class="h-full rounded-full bg-emerald-400 transition-[width]"
+                      :style="{ width: `${Math.round(entry.returnProgress * 100)}%` }"
+                    ></div>
+                  </div>
+                </div>
+              </div>
+              <div class="mt-3 grid gap-2 text-[11px] uppercase tracking-wide text-text-secondary/60 md:grid-cols-3">
+                <span>Departed {{ formatTimestamp(entry.departed_at ?? "") }}</span>
+                <span>Arrival {{ formatTimestamp(entry.arrive_at ?? "") }}</span>
+                <span>Return {{ formatTimestamp(entry.return_at ?? "") }}</span>
+              </div>
+            </li>
+          </ul>
         </div>
       </div>
     </section>

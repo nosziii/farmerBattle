@@ -9,30 +9,7 @@ import {
   ensureActiveVillageId,
 } from '../services/villageState';
 import type { BuildingRequirement } from '../types/buildings';
-
-interface TroopRequirement {
-  building: string;
-  level: number;
-}
-
-interface TroopDefinition {
-  id: number;
-  name: string;
-  attack: number;
-  defense: number;
-  speed: number;
-  carry_capacity: number;
-  wood_cost: number;
-  clay_cost: number;
-  iron_cost: number;
-  training_time: number;
-  requirements: TroopRequirement[];
-}
-
-interface AvailableTroop extends TroopDefinition {
-  available: boolean;
-  missing_requirements: BuildingRequirement[];
-}
+import type { AvailableTroop, TroopDefinition } from '../types/troops';
 
 interface QueueItem {
   id: number;

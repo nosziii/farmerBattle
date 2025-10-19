@@ -14,6 +14,7 @@ import Storage from "./views/Storage.vue";
 import Admin from "./views/Admin.vue";
 import Info from "./views/Info.vue";
 import Placeholder from "./views/Placeholder.vue";
+import Expeditions from "./views/Expeditions.vue";
 
 const routes = [
   { path: "/", component: Landing },
@@ -37,7 +38,7 @@ const routes = [
   { path: "/clan", component: Placeholder, props: { title: "Clan Hub" }, meta: { requiresAuth: true } },
   { path: "/mail", component: Placeholder, props: { title: "Mail Center" }, meta: { requiresAuth: true } },
   { path: "/settings", component: Placeholder, props: { title: "Settings" }, meta: { requiresAuth: true } },
-  { path: "/expeditions", component: Placeholder, props: { title: "Expeditions" }, meta: { requiresAuth: true } },
+  { path: "/expeditions", component: Expeditions, meta: { requiresAuth: true } },
   { path: "/trade", component: Placeholder, props: { title: "Trade Routes" }, meta: { requiresAuth: true } },
   { path: "/:pathMatch(.*)*", redirect: "/" },
 ];

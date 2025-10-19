@@ -10,6 +10,7 @@ import {
   activeVillageId,
   ensureActiveVillageId,
 } from "../../services/villageState";
+import { useI18n } from "../../i18n";
 
 /** Compact mód tárolása */
 const isCompact = ref(localStorage.getItem("fb_sidebar_compact") === "1");
@@ -70,6 +71,8 @@ watch(
   },
   { flush: "post" }
 );
+
+const { t } = useI18n();
 </script>
 
 <template>
@@ -98,19 +101,27 @@ watch(
         </div>
         <span
           class="absolute -right-2 -bottom-2 text-xs px-2 py-0.5 rounded-full bg-primary-800/70 border border-primary-700 shadow-sm"
-          >alpha</span
+          >{{ t("sidebar.brand.badge") }}</span
         >
       </div>
 
       <div v-if="!isCompact" class="leading-tight">
-        <h2 class="text-lg font-bold tracking-wide">Farmer Battle</h2>
-        <p class="text-[11px] text-text-secondary">Village Builder • v0.1</p>
+        <h2 class="text-lg font-bold tracking-wide">
+          {{ t("sidebar.brand.title") }}
+        </h2>
+        <p class="text-[11px] text-text-secondary">
+          {{ t("sidebar.brand.subtitle") }}
+        </p>
       </div>
 
       <!-- Compact toggle -->
       <button
         class="ml-auto rounded-lg px-2 py-2 hover:bg-secondary-800/70 border border-secondary/40 transition"
-        :title="isCompact ? 'Expand' : 'Compact'"
+        :title="
+          isCompact
+            ? t('sidebar.toggle.expand')
+            : t('sidebar.toggle.compact')
+        "
         @click="toggleCompact"
       >
         <span v-if="isCompact">➡️</span>
@@ -127,22 +138,24 @@ watch(
       <div class="p-3 bg-gradient-to-br from-primary-900/30 to-primary-800/10">
         <div class="flex items-center gap-2 text-sm">
           <span>🎃</span>
-          <span class="font-semibold">Harvest Festival</span>
-          <span class="text-text-secondary">• 3d left</span>
+          <span class="font-semibold">{{ t("sidebar.event.title") }}</span>
+          <span class="text-text-secondary">{{
+            t("sidebar.event.countdown")
+          }}</span>
         </div>
         <p class="mt-1 text-xs text-text-secondary">
-          Double food yield from farms. Join the co-op quests!
+          {{ t("sidebar.event.description") }}
         </p>
         <div class="mt-3 flex gap-2">
           <router-link
             to="/quests"
             class="text-xs px-3 py-1.5 rounded-lg border border-primary-700/60 hover:bg-primary-800/30 transition"
-            >View Quests</router-link
+            >{{ t("sidebar.event.viewQuests") }}</router-link
           >
           <router-link
             to="/shop"
             class="text-xs px-3 py-1.5 rounded-lg bg-primary-700/70 hover:bg-primary-600/70 border border-primary-600/60 transition"
-            >Event Shop</router-link
+            >{{ t("sidebar.event.eventShop") }}</router-link
           >
         </div>
       </div>
@@ -153,10 +166,26 @@ watch(
       class="grid gap-2 mb-5"
       :class="isCompact ? 'grid-cols-1' : 'grid-cols-2'"
     >
-      <ResourcePill icon="🪙" label="Gold" :value="resourceSnapshot.gold" />
-      <ResourcePill icon="🪵" label="Wood" :value="resourceSnapshot.wood" />
-      <ResourcePill icon="🧱" label="Clay" :value="resourceSnapshot.clay" />
-      <ResourcePill icon="⛏️" label="Iron" :value="resourceSnapshot.iron" />
+      <ResourcePill
+        icon="🪙"
+        :label="t('sidebar.resources.gold')"
+        :value="resourceSnapshot.gold"
+      />
+      <ResourcePill
+        icon="🪵"
+        :label="t('sidebar.resources.wood')"
+        :value="resourceSnapshot.wood"
+      />
+      <ResourcePill
+        icon="🧱"
+        :label="t('sidebar.resources.clay')"
+        :value="resourceSnapshot.clay"
+      />
+      <ResourcePill
+        icon="⛏️"
+        :label="t('sidebar.resources.iron')"
+        :value="resourceSnapshot.iron"
+      />
     </div>
 
     <!-- Quick Actions -->
@@ -167,7 +196,13 @@ watch(
       <ActionBtn
         class="w-full"
         icon="🏗️"
-        label="Build"
+        :label="t('sidebar.actions.build')"
+        :tooltip="
+          t('sidebar.actions.hotkey', {
+            label: t('sidebar.actions.build'),
+            key: 'B',
+          })
+        "
         k="B"
         to="/build"
         :compact="isCompact"
@@ -175,7 +210,13 @@ watch(
       <ActionBtn
         class="w-full"
         icon="🛡️"
-        label="Train"
+        :label="t('sidebar.actions.train')"
+        :tooltip="
+          t('sidebar.actions.hotkey', {
+            label: t('sidebar.actions.train'),
+            key: 'T',
+          })
+        "
         k="T"
         to="/barracks"
         :compact="isCompact"
@@ -183,7 +224,13 @@ watch(
       <ActionBtn
         class="w-full"
         icon="🧠"
-        label="Research"
+        :label="t('sidebar.actions.research')"
+        :tooltip="
+          t('sidebar.actions.hotkey', {
+            label: t('sidebar.actions.research'),
+            key: 'R',
+          })
+        "
         k="R"
         to="/research"
         :compact="isCompact"
@@ -192,30 +239,105 @@ watch(
 
     <!-- Nav groups -->
     <nav class="space-y-4 overflow-y-auto pr-1 sidebar-scroll pb-28">
-      <NavGroup icon="🏡" title="Village" :compact="isCompact">
-        <NavItem to="/village" icon="🏠" label="Town Square" />
-        <NavItem to="/build" icon="🧱" label="Build & Upgrades" />
-        <NavItem to="/storage" icon="📦" label="Storage" />
-        <NavItem to="/market" icon="🛒" label="Market" badge="2" />
+      <NavGroup
+        icon="🏡"
+        :title="t('sidebar.nav.village.title')"
+        :compact="isCompact"
+      >
+        <NavItem
+          to="/village"
+          icon="🏠"
+          :label="t('sidebar.nav.village.townSquare')"
+        />
+        <NavItem
+          to="/build"
+          icon="🧱"
+          :label="t('sidebar.nav.village.build')"
+        />
+        <NavItem
+          to="/storage"
+          icon="📦"
+          :label="t('sidebar.nav.village.storage')"
+        />
+        <NavItem
+          to="/market"
+          icon="🛒"
+          :label="t('sidebar.nav.village.market')"
+          badge="2"
+        />
       </NavGroup>
 
-      <NavGroup icon="⚔️" title="Military" :compact="isCompact">
-        <NavItem to="/barracks" icon="🗡️" label="Barracks" />
-        <NavItem to="/armory" icon="🛡️" label="Armory" />
-        <NavItem to="/battle" icon="🔥" label="Battle" />
-        <NavItem to="/defense" icon="🏹" label="Defense" />
+      <NavGroup
+        icon="⚔️"
+        :title="t('sidebar.nav.military.title')"
+        :compact="isCompact"
+      >
+        <NavItem
+          to="/barracks"
+          icon="🗡️"
+          :label="t('sidebar.nav.military.barracks')"
+        />
+        <NavItem
+          to="/armory"
+          icon="🛡️"
+          :label="t('sidebar.nav.military.armory')"
+        />
+        <NavItem
+          to="/battle"
+          icon="🔥"
+          :label="t('sidebar.nav.military.battle')"
+        />
+        <NavItem
+          to="/defense"
+          icon="🏹"
+          :label="t('sidebar.nav.military.defense')"
+        />
       </NavGroup>
 
-      <NavGroup icon="🗺️" title="World" :compact="isCompact">
-        <NavItem to="/map" icon="🧭" label="World Map" />
-        <NavItem to="/expeditions" icon="🧳" label="Expeditions" />
-        <NavItem to="/trade" icon="⚖️" label="Trade Routes" />
+      <NavGroup
+        icon="🗺️"
+        :title="t('sidebar.nav.world.title')"
+        :compact="isCompact"
+      >
+        <NavItem
+          to="/map"
+          icon="🧭"
+          :label="t('sidebar.nav.world.map')"
+        />
+        <NavItem
+          to="/expeditions"
+          icon="🧳"
+          :label="t('sidebar.nav.world.expeditions')"
+        />
+        <NavItem
+          to="/trade"
+          icon="⚖️"
+          :label="t('sidebar.nav.world.tradeRoutes')"
+        />
       </NavGroup>
 
-      <NavGroup icon="👥" title="Social" :compact="isCompact">
-        <NavItem to="/leaderboard" icon="🏆" label="Leaderboard" />
-        <NavItem to="/clan" icon="🏳️" label="Clan" badge="!" />
-        <NavItem to="/mail" icon="✉️" label="Mail" badge="5" />
+      <NavGroup
+        icon="👥"
+        :title="t('sidebar.nav.social.title')"
+        :compact="isCompact"
+      >
+        <NavItem
+          to="/leaderboard"
+          icon="🏆"
+          :label="t('sidebar.nav.social.leaderboard')"
+        />
+        <NavItem
+          to="/clan"
+          icon="🏳️"
+          :label="t('sidebar.nav.social.clan')"
+          badge="!"
+        />
+        <NavItem
+          to="/mail"
+          icon="✉️"
+          :label="t('sidebar.nav.social.mail')"
+          badge="5"
+        />
       </NavGroup>
     </nav>
 
@@ -231,8 +353,12 @@ watch(
         </div>
         <div v-if="!isCompact" class="flex-1">
           <div class="flex items-center justify-between">
-            <span class="text-sm font-medium">Zsolt</span>
-            <span class="text-[10px] text-text-secondary">Lv. 7</span>
+            <span class="text-sm font-medium">{{
+              t("sidebar.profile.name")
+            }}</span>
+            <span class="text-[10px] text-text-secondary">{{
+              t("sidebar.profile.level", { level: 7 })
+            }}</span>
           </div>
           <div class="mt-1 h-2 bg-secondary/40 rounded-full overflow-hidden">
             <div
@@ -240,13 +366,19 @@ watch(
             ></div>
           </div>
           <div class="mt-2 flex gap-2">
-            <router-link to="/settings" class="btn-secondary text-[11px]"
-              >Settings</router-link
-            >
-            <button class="btn-danger text-[11px]">Logout</button>
+            <router-link to="/settings" class="btn-secondary text-[11px]">
+              {{ t("sidebar.profile.settings") }}
+            </router-link>
+            <button class="btn-danger text-[11px]">
+              {{ t("sidebar.profile.logout") }}
+            </button>
           </div>
         </div>
-        <router-link v-else to="/settings" class="ml-auto" title="Settings"
+        <router-link
+          v-else
+          to="/settings"
+          class="ml-auto"
+          :title="t('sidebar.profile.settings')"
           >⚙️</router-link
         >
       </div>
