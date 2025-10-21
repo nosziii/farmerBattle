@@ -22,6 +22,8 @@ def create_village(
     db: Session = Depends(get_db),
     current_user: schemas.User = Depends(auth.get_current_user),
 ):
+    if not getattr(current_user, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Only admins can create villages.")
     payload = models.VillageCreate(name=village.name, user_id=current_user.id)
     return crud.create_village(db=db, village=payload)
 

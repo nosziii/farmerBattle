@@ -20,7 +20,6 @@ origins = [
     "http://localhost:8080",
     "http://127.0.0.1:8080",
 ]
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -41,6 +40,8 @@ app.include_router(expeditions.router, prefix="/api")
 app.include_router(admin.router, prefix="/api/admin")
 app.include_router(auth_router.router, prefix="")
 app.include_router(websocket.router)
+
+
 
 async def process_training_queue_task():
     db = SessionLocal()

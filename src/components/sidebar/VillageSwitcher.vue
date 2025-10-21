@@ -10,12 +10,14 @@ import {
   villages,
   villagesLoading,
 } from "../../services/villageState";
+import { useAuthState } from "../../services/auth";
 
 const isRefreshing = ref(false);
 const isCreating = ref(false);
 const creationName = ref("");
 const feedback = ref<string | null>(null);
 const feedbackType = ref<"success" | "error" | "info">("info");
+const { isAdmin } = useAuthState();
 
 const sortedVillages = computed(() => {
   return [...villages.value].sort((a, b) => a.id - b.id);
@@ -61,6 +63,10 @@ const reload = async () => {
 };
 
 const createVillage = async () => {
+  if (!isAdmin.value) {
+    showFeedback("Only admins can create villages", "error");
+    return;
+  }
   if (isCreating.value) return;
   const name = creationName.value.trim() || `New Village #${sortedVillages.value.length + 1}`;
   isCreating.value = true;
@@ -125,7 +131,10 @@ onMounted(async () => {
         </option>
       </select>
 
-      <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+      <div
+        v-if="isAdmin"
+        class="flex flex-col gap-2 sm:flex-row sm:items-center"
+      >
         <input
           v-model="creationName"
           type="text"
