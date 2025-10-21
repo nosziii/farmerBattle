@@ -185,6 +185,13 @@ class VillageTroop(VillageTroopBase):
     troop: Troop
     model_config = ConfigDict(from_attributes=True)
 
+class AdminVillageTroopUpdate(BaseModel):
+    troop_id: int
+    quantity: int
+
+class AdminVillageTroopBulkUpdate(BaseModel):
+    troops: List[AdminVillageTroopUpdate]
+
 class TrainingQueueBase(BaseModel):
     village_id: int
     troop_id: int

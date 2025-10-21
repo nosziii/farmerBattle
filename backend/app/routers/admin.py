@@ -113,6 +113,25 @@ def update_village(
     return crud.admin_update_village(db, village_id, payload)
 
 
+@router.get("/villages/{village_id}/troops", response_model=List[models.VillageTroop])
+def list_village_troops(
+    village_id: int,
+    db: Session = Depends(get_db),
+    _: schemas.User = Depends(require_admin),
+):
+    return crud.get_village_troops(db, village_id)
+
+
+@router.put("/villages/{village_id}/troops", response_model=List[models.VillageTroop])
+def set_village_troops(
+    village_id: int,
+    payload: models.AdminVillageTroopBulkUpdate,
+    db: Session = Depends(get_db),
+    _: schemas.User = Depends(require_admin),
+):
+    return crud.admin_set_village_troops(db, village_id, payload)
+
+
 @router.post("/map/assign", response_model=models.MapPosition)
 def assign_village_tile(
     payload: models.AdminAssignVillageTile,

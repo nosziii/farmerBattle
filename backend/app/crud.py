@@ -2449,3 +2449,76 @@ def admin_assign_village_to_tile(db: Session, village_id: int, x: int, y: int, f
     tile.player_village_id = village_id
     db.commit()
     return models.MapPosition(x=tile.x, y=tile.y)
+
+
+def admin_set_village_troops(
+    db: Session,
+    village_id: int,
+    payload: models.AdminVillageTroopBulkUpdate,
+) -> List[models.VillageTroop]:
+    village = (
+        db.query(schemas.Village)
+        .filter(schemas.Village.id == village_id)
+        .first()
+    )
+    if not village:
+        raise HTTPException(status_code=404, detail="Village not found")
+
+    updates = payload.troops or []
+    seen: set[int] = set()
+    for entry in updates:
+        if entry.troop_id in seen:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Duplicate troop id {entry.troop_id} in payload",
+            )
+        seen.add(entry.troop_id)
+        if entry.quantity < 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Quantity for troop {entry.troop_id} cannot be negative",
+            )
+
+    if not updates:
+        return get_village_troops(db, village_id)
+
+    troop_records = {
+        troop.id: troop
+        for troop in db.query(schemas.Troop)
+        .filter(schemas.Troop.id.in_(seen))
+        .all()
+    }
+    missing = seen.difference(troop_records)
+    if missing:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Troop ids not found: {', '.join(str(mid) for mid in sorted(missing))}",
+        )
+
+    existing = {
+        record.troop_id: record
+        for record in db.query(schemas.VillageTroop)
+        .filter(schemas.VillageTroop.village_id == village_id)
+        .all()
+    }
+
+    for entry in updates:
+        current = existing.get(entry.troop_id)
+        if entry.quantity == 0:
+            if current:
+                db.delete(current)
+            continue
+
+        if current:
+            current.quantity = entry.quantity
+        else:
+            db.add(
+                schemas.VillageTroop(
+                    village_id=village_id,
+                    troop_id=entry.troop_id,
+                    quantity=entry.quantity,
+                )
+            )
+
+    db.commit()
+    return get_village_troops(db, village_id)

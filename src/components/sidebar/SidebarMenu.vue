@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted, watch } from "vue";
 import axios from "axios";
 import ResourcePill from "./ResourcePill.vue";
+import VillageSwitcher from "./VillageSwitcher.vue";
 import ActionBtn from "./ActionBtn.vue";
 import NavGroup from "./NavGroup.vue";
 import NavItem from "./NavItem.vue";
@@ -128,6 +129,8 @@ const { t } = useI18n();
         <span v-else>⬅️</span>
       </button>
     </div>
+
+    <VillageSwitcher v-if="!isCompact" class="mb-4" />
 
     <!-- Event / banner -->
     <div

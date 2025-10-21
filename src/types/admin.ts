@@ -61,6 +61,23 @@ export interface AdminAssignTileRequest {
   force?: boolean;
 }
 
+export interface AdminVillageTroop {
+  id: number;
+  village_id: number;
+  troop_id: number;
+  quantity: number;
+  troop: AdminTroop;
+}
+
+export interface AdminVillageTroopUpdate {
+  troop_id: number;
+  quantity: number;
+}
+
+export interface AdminVillageTroopUpdatePayload {
+  troops: AdminVillageTroopUpdate[];
+}
+
 export interface AdminTroopRequirement {
   building: string;
   level: number;

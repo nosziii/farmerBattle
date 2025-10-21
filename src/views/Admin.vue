@@ -3,14 +3,10 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import axios from 'axios';
 import { ensureAuthReady, signOut as authSignOut, useAuthState } from '../services/auth';
+import AdminVillagesSection from './admin/AdminVillagesSection.vue';
 import type {
   AdminUser,
   AdminUserCreate,
-  AdminVillageSummary,
-  AdminVillageDetail,
-  AdminVillageUpdate,
-  AdminVillageCreate,
-  AdminAssignTileRequest,
   AdminTroop,
   AdminTroopCreate,
   AdminTroopUpdate,
@@ -52,10 +48,9 @@ const successMessage = ref<string | null>(null);
 const loadingSection = ref<SectionKey | null>(null);
 
 const users = ref<AdminUser[]>([]);
-const villages = ref<AdminVillageSummary[]>([]);
-const villageDetail = ref<AdminVillageDetail | null>(null);
 const mapOverview = ref<MapOverview | null>(null);
 const troops = ref<AdminTroop[]>([]);
+const villagesSectionRef = ref<InstanceType<typeof AdminVillagesSection> | null>(null);
 
 const troopForms = ref<Record<number, AdminTroopForm>>({});
 
@@ -76,7 +71,6 @@ const newTroopForm = ref<AdminTroopForm>(createEmptyTroopForm());
 const troopRequirementHint = 'Format: building:level (e.g. barracks:1, smithy:2)';
 
 const selectedUserId = ref<number | null>(null);
-const selectedVillageId = ref<number | null>(null);
 
 const selectedUser = computed(() => users.value.find((user) => user.id === selectedUserId.value) ?? null);
 
@@ -88,70 +82,12 @@ const userEditForm = ref({
 
 const userUpdatePending = ref(false);
 
-const villageForm = ref({
-  name: '',
-  wood: 0,
-  clay: 0,
-  iron: 0,
-  gold: 0,
-  wood_mill_level: 1,
-  clay_pit_level: 1,
-  iron_mine_level: 1,
-  town_hall_level: 1,
-  warehouse_level: 1,
-});
-
-const assignForm = ref<{ x: number | null; y: number | null; force: boolean }>({ x: null, y: null, force: false });
 const newUserForm = ref<AdminUserCreate>({ username: '', password: 'password' });
-const newVillageForm = ref<AdminVillageCreate>({ user_id: 0, name: '' });
 
 const sectionLoaded = ref<Record<SectionKey, boolean>>({ users: false, villages: false, map: false, troops: false });
-
-const resourceFields = [
-  { key: 'wood', label: 'Wood' },
-  { key: 'clay', label: 'Clay' },
-  { key: 'iron', label: 'Iron' },
-  { key: 'gold', label: 'Gold' },
-] as const;
-
-const buildingFields = [
-  { key: 'wood_mill_level', label: 'Wood Mill' },
-  { key: 'clay_pit_level', label: 'Clay Pit' },
-  { key: 'iron_mine_level', label: 'Iron Mine' },
-  { key: 'town_hall_level', label: 'Town Hall' },
-  { key: 'warehouse_level', label: 'Warehouse' },
-] as const;
-
-type ResourceKey = (typeof resourceFields)[number]['key'];
-type BuildingKey = (typeof buildingFields)[number]['key'];
-
-const resourceAdjustPresets = [100, 1000, 10000] as const;
-const buildingLevelAdjustPresets = [1, 5] as const;
-
-const filteredVillages = computed(() => {
-  if (!selectedUserId.value) {
-    return villages.value;
-  }
-  return villages.value.filter((village) => village.user_id === selectedUserId.value);
-});
-
-const formatDelta = (value: number) => {
-  if (Math.abs(value) >= 1000) {
-    return `${value > 0 ? '+' : ''}${value / 1000}k`;
-  }
-  return `${value > 0 ? '+' : ''}${value}`;
-};
-
-const adjustResource = (key: ResourceKey, delta: number) => {
-  const current = Number((villageForm.value as any)[key] ?? 0);
-  const next = Math.max(0, Math.round((current + delta) * 100) / 100);
-  (villageForm.value as any)[key] = next;
-};
-
-const adjustBuildingLevel = (key: BuildingKey, delta: number) => {
-  const current = Number((villageForm.value as any)[key] ?? 1);
-  const next = Math.max(1, current + delta);
-  (villageForm.value as any)[key] = next;
+const villagesLoaded = computed(() => sectionLoaded.value.villages);
+const setVillagesLoaded = (loaded: boolean) => {
+  sectionLoaded.value.villages = loaded;
 };
 
 const mapStats = computed(() => {
@@ -261,21 +197,6 @@ const ensureAdminAccess = () => {
   return true;
 };
 
-const hydrateVillageForm = (detail: AdminVillageDetail) => {
-  villageForm.value = {
-    name: detail.name,
-    wood: detail.resources.wood,
-    clay: detail.resources.clay,
-    iron: detail.resources.iron,
-    gold: detail.resources.gold,
-    wood_mill_level: detail.building_levels.wood_mill ?? 1,
-    clay_pit_level: detail.building_levels.clay_pit ?? 1,
-    iron_mine_level: detail.building_levels.iron_mine ?? 1,
-    town_hall_level: detail.building_levels.town_hall ?? 1,
-    warehouse_level: detail.building_levels.warehouse ?? 1,
-  };
-};
-
 const fetchUsers = async () => {
   if (!ensureAdminAccess()) return;
   loadingSection.value = 'users';
@@ -291,33 +212,6 @@ const fetchUsers = async () => {
   } finally {
     sectionLoaded.value.users = true;
     loadingSection.value = null;
-  }
-};
-
-const fetchVillages = async (refreshDetail = false) => {
-  if (!ensureAdminAccess()) return;
-  loadingSection.value = 'villages';
-  try {
-    const { data } = await axios.get<AdminVillageSummary[]>(`${API_BASE}/admin/villages`);
-    villages.value = data;
-    if (!selectedVillageId.value && data.length) selectedVillageId.value = data[0].id;
-    if (refreshDetail && selectedVillageId.value) await fetchVillageDetail(selectedVillageId.value);
-  } catch (err: any) {
-    setError(err.response?.data?.detail ?? 'Failed to fetch villages.');
-  } finally {
-    sectionLoaded.value.villages = true;
-    loadingSection.value = null;
-  }
-};
-
-const fetchVillageDetail = async (villageId: number | null) => {
-  if (!villageId || !ensureAdminAccess()) return;
-  try {
-    const { data } = await axios.get<AdminVillageDetail>(`${API_BASE}/admin/villages/${villageId}`);
-    villageDetail.value = data;
-    hydrateVillageForm(data);
-  } catch (err: any) {
-    setError(err.response?.data?.detail ?? 'Failed to load village detail.');
   }
 };
 
@@ -353,74 +247,30 @@ const fetchTroops = async () => {
 
 const ensureSectionData = async (section: SectionKey) => {
   if (!isAuthenticated.value) return;
-  if (sectionLoaded.value[section]) {
-    if (section === 'villages' && selectedVillageId.value) {
-      await fetchVillageDetail(selectedVillageId.value);
-    }
-    return;
-  }
   switch (section) {
     case 'users':
-      await fetchUsers();
+      if (!sectionLoaded.value.users) {
+        await fetchUsers();
+      }
       break;
     case 'villages':
-      await fetchVillages(true);
+      if (villagesSectionRef.value) {
+        await villagesSectionRef.value.ensureLoaded();
+      }
       break;
-    case 'map':
-      await Promise.all([fetchVillages(), fetchMapOverview()]);
+    case 'map': {
+      const tasks: Promise<unknown>[] = [fetchMapOverview()];
+      if (villagesSectionRef.value) {
+        tasks.push(villagesSectionRef.value.ensureLoaded());
+      }
+      await Promise.all(tasks);
       break;
+    }
     case 'troops':
-      await fetchTroops();
+      if (!sectionLoaded.value.troops) {
+        await fetchTroops();
+      }
       break;
-  }
-};
-
-const saveVillage = async () => {
-  if (!selectedVillageId.value || !ensureAdminAccess()) return;
-  const payload: AdminVillageUpdate = {
-    name: villageForm.value.name,
-    wood: villageForm.value.wood,
-    clay: villageForm.value.clay,
-    iron: villageForm.value.iron,
-    gold: villageForm.value.gold,
-    wood_mill_level: villageForm.value.wood_mill_level,
-    clay_pit_level: villageForm.value.clay_pit_level,
-    iron_mine_level: villageForm.value.iron_mine_level,
-    town_hall_level: villageForm.value.town_hall_level,
-    warehouse_level: villageForm.value.warehouse_level,
-  };
-  try {
-    const { data } = await axios.put<AdminVillageDetail>(
-      `${API_BASE}/admin/villages/${selectedVillageId.value}`,
-      payload
-    );
-    villageDetail.value = data;
-    hydrateVillageForm(data);
-    setSuccess('Village updated');
-    await fetchVillages();
-  } catch (err: any) {
-    setError(err.response?.data?.detail ?? 'Failed to update village.');
-  }
-};
-
-const assignVillageTile = async () => {
-  if (!selectedVillageId.value || !ensureAdminAccess()) return;
-  if (assignForm.value.x == null || assignForm.value.y == null) {
-    setError('Please provide tile coordinates.');
-    return;
-  }
-  const payload: AdminAssignTileRequest = {
-    village_id: selectedVillageId.value,
-    x: Number(assignForm.value.x),
-    y: Number(assignForm.value.y),
-    force: !!assignForm.value.force,
-  };
-  try {
-    await axios.post(`${API_BASE}/admin/map/assign`, payload);
-    setSuccess('Village assigned to tile');
-    await Promise.all([fetchVillageDetail(selectedVillageId.value), fetchVillages(), fetchMapOverview()]);
-  } catch (err: any) {
-    setError(err.response?.data?.detail ?? 'Failed to assign tile.');
   }
 };
 
@@ -475,22 +325,6 @@ const createUser = async () => {
     await fetchUsers();
   } catch (err: any) {
     setError(err.response?.data?.detail ?? 'Failed to create user.');
-  }
-};
-
-const createVillage = async () => {
-  if (!newVillageForm.value.user_id || !newVillageForm.value.name.trim() || !ensureAdminAccess()) {
-    setError('Owner and village name are required.');
-    return;
-  }
-  try {
-    await axios.post(`${API_BASE}/admin/villages`, newVillageForm.value);
-    setSuccess('Village created');
-    newVillageForm.value = { user_id: selectedUserId.value ?? 0, name: '' };
-    sectionLoaded.value.villages = false;
-    await fetchVillages(true);
-  } catch (err: any) {
-    setError(err.response?.data?.detail ?? 'Failed to create village.');
   }
 };
 
@@ -582,19 +416,6 @@ const createTroopDefinition = async () => {
   }
 };
 
-watch(selectedVillageId, (villageId) => {
-  if (activeSection.value === 'villages') {
-    fetchVillageDetail(villageId);
-  }
-});
-
-watch(selectedUserId, () => {
-  newVillageForm.value.user_id = selectedUserId.value ?? 0;
-  if (filteredVillages.value.length) {
-    selectedVillageId.value = filteredVillages.value[0].id;
-  }
-});
-
 watch(selectedUser, (user) => {
   if (!user) {
     userEditForm.value = { username: '', password: '', is_active: true };
@@ -634,8 +455,6 @@ const signOut = () => {
   authSignOut();
   sectionLoaded.value = { users: false, villages: false, map: false, troops: false };
   users.value = [];
-  villages.value = [];
-  villageDetail.value = null;
   mapOverview.value = null;
   troops.value = [];
   troopForms.value = {};
@@ -835,213 +654,19 @@ const signOut = () => {
       </div>
     </section>
 
-    <section v-else-if="activeSection === 'villages'" class="space-y-6">
-      <div class="grid gap-6 lg:grid-cols-2">
-        <div class="rounded-2xl border border-secondary-700/40 bg-secondary-900/60 px-6 py-5 space-y-4">
-          <header class="flex items-center justify-between">
-            <h2 class="text-xl font-semibold text-text-primary">Villages</h2>
-            <span class="text-xs text-text-secondary/70">{{ villages.length }} total</span>
-          </header>
-
-          <div v-if="loadingSection === 'villages'" class="py-10 text-center text-text-secondary">
-            Loading villages...
-          </div>
-
-          <div v-else class="space-y-2 max-h-72 overflow-y-auto">
-            <button
-              v-for="village in filteredVillages"
-              :key="village.id"
-              class="w-full rounded-lg border px-3 py-2 text-left text-sm transition"
-              :class="[
-                village.id === selectedVillageId
-                  ? 'border-emerald-500/60 bg-emerald-500/10 text-text-primary'
-                  : 'border-secondary-700/40 bg-secondary-800/60 text-text-secondary'
-              ]"
-              @click="selectedVillageId = village.id"
-            >
-              <div class="flex justify-between">
-                <span class="font-semibold text-text-primary">{{ village.name }}</span>
-                <span class="text-xs text-text-secondary/70">ID {{ village.id }}</span>
-              </div>
-              <div class="text-xs text-text-secondary/70">Owner: {{ village.user_name }}</div>
-              <div class="text-xs text-text-secondary/70">Tile: {{ village.tile ? `${village.tile.x}|${village.tile.y}` : 'Unassigned' }}</div>
-            </button>
-          </div>
-
-          <form class="space-y-2" @submit.prevent="createVillage">
-            <h3 class="text-sm font-semibold text-text-primary uppercase tracking-wide">Create village</h3>
-            <input
-              v-model.number="newVillageForm.user_id"
-              type="number"
-              min="1"
-              placeholder="Owner user id"
-              class="w-full rounded-lg border border-secondary-700/40 bg-secondary-800/60 px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary"
-            />
-            <input
-              v-model="newVillageForm.name"
-              type="text"
-              placeholder="Village name"
-              class="w-full rounded-lg border border-secondary-700/40 bg-secondary-800/60 px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary"
-            />
-            <button
-              type="submit"
-              class="rounded-lg border border-primary/40 bg-primary/70 px-4 py-2 text-sm font-semibold text-white hover:bg-primary"
-            >
-              Add village
-            </button>
-          </form>
-        </div>
-
-        <div v-if="villageDetail" class="rounded-2xl border border-secondary-700/40 bg-secondary-900/60 px-6 py-5 space-y-5">
-        <header class="flex items-center justify-between">
-          <div>
-            <h2 class="text-xl font-semibold text-text-primary">{{ villageForm.name || villageDetail.name }}</h2>
-            <p class="text-xs text-text-secondary">Owner: {{ villageDetail.user_name }}</p>
-          </div>
-          <span class="text-xs text-text-secondary/70">Tile: {{ villageDetail.tile ? `${villageDetail.tile.x}|${villageDetail.tile.y}` : 'Unassigned' }}</span>
-        </header>
-
-        <div class="space-y-6">
-          <div class="grid gap-4 md:grid-cols-2">
-            <label class="text-sm text-text-secondary md:col-span-2">
-              <span class="text-xs uppercase tracking-wide text-text-secondary/70">Village name</span>
-              <input
-                v-model="villageForm.name"
-                type="text"
-                class="mt-1 w-full rounded-lg border border-secondary-700/40 bg-secondary-800/60 px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary"
-              />
-            </label>
-          </div>
-
-          <div class="grid gap-6 md:grid-cols-2">
-            <div class="space-y-3">
-              <h3 class="text-sm font-semibold text-text-primary uppercase tracking-wide">Resources</h3>
-              <div class="space-y-3">
-                <div v-for="field in resourceFields" :key="field.key" class="text-sm text-text-secondary">
-                  <span class="block text-xs uppercase tracking-wide text-text-secondary/70">{{ field.label }}</span>
-                  <div class="mt-1 flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <input
-                      v-model.number="(villageForm as any)[field.key]"
-                      type="number"
-                      step="0.01"
-                      class="w-full rounded-lg border border-secondary-700/40 bg-secondary-800/60 px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary"
-                    />
-                    <div class="flex flex-wrap gap-1">
-                      <button
-                        v-for="delta in resourceAdjustPresets"
-                        :key="`inc-${field.key}-${delta}`"
-                        type="button"
-                        class="rounded-lg border border-primary/30 bg-primary/20 px-2 py-1 text-xs text-primary-100 hover:bg-primary/30"
-                        @click="adjustResource(field.key, delta)"
-                      >
-                        {{ formatDelta(delta) }}
-                      </button>
-                      <button
-                        v-for="delta in resourceAdjustPresets"
-                        :key="`dec-${field.key}-${delta}`"
-                        type="button"
-                        class="rounded-lg border border-secondary-600/40 bg-secondary-800/70 px-2 py-1 text-xs text-text-secondary hover:bg-secondary-700"
-                        @click="adjustResource(field.key, -delta)"
-                      >
-                        {{ formatDelta(-delta) }}
-                      </button>
-                      <button
-                        type="button"
-                        class="rounded-lg border border-secondary-700/40 bg-secondary-900/70 px-2 py-1 text-xs text-text-secondary hover:bg-secondary-800"
-                        @click="(villageForm as any)[field.key] = 0"
-                      >
-                        Zero
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="space-y-3">
-              <h3 class="text-sm font-semibold text-text-primary uppercase tracking-wide">Building levels</h3>
-              <div class="space-y-3">
-                <div v-for="field in buildingFields" :key="field.key" class="text-sm text-text-secondary">
-                  <span class="block text-xs uppercase tracking-wide text-text-secondary/70">{{ field.label }}</span>
-                  <div class="mt-1 flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <input
-                      v-model.number="(villageForm as any)[field.key]"
-                      type="number"
-                      min="1"
-                      class="w-full rounded-lg border border-secondary-700/40 bg-secondary-800/60 px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary"
-                    />
-                    <div class="flex flex-wrap gap-1">
-                      <button
-                        v-for="delta in buildingLevelAdjustPresets"
-                        :key="`inc-${field.key}-${delta}`"
-                        type="button"
-                        class="rounded-lg border border-primary/30 bg-primary/20 px-2 py-1 text-xs text-primary-100 hover:bg-primary/30"
-                        @click="adjustBuildingLevel(field.key, delta)"
-                      >
-                        +{{ delta }}
-                      </button>
-                      <button
-                        v-for="delta in buildingLevelAdjustPresets"
-                        :key="`dec-${field.key}-${delta}`"
-                        type="button"
-                        class="rounded-lg border border-secondary-600/40 bg-secondary-800/70 px-2 py-1 text-xs text-text-secondary hover:bg-secondary-700"
-                        @click="adjustBuildingLevel(field.key, -delta)"
-                      >
-                        -{{ delta }}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-          <div class="flex flex-wrap gap-3 pt-1">
-            <button
-              type="button"
-              class="rounded-lg border border-primary/40 bg-primary/70 px-4 py-2 text-sm font-semibold text-white hover:bg-primary"
-              @click="saveVillage"
-            >
-              Save changes
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <section class="rounded-2xl border border-secondary-700/40 bg-secondary-900/60 px-6 py-5 space-y-4">
-        <h3 class="text-sm font-semibold text-text-primary uppercase tracking-wide">Assign map tile</h3>
-        <p class="text-sm text-text-secondary">Force override removes the previous occupant.</p>
-        <form class="flex flex-wrap items-end gap-3" @submit.prevent="assignVillageTile">
-          <label class="flex flex-col text-sm text-text-secondary">
-            <span class="text-xs uppercase tracking-wide text-text-secondary/70">X</span>
-            <input
-              v-model.number="assignForm.x"
-              type="number"
-              class="rounded-lg border border-secondary-700/40 bg-secondary-800/60 px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary"
-            />
-          </label>
-          <label class="flex flex-col text-sm text-text-secondary">
-            <span class="text-xs uppercase tracking-wide text-text-secondary/70">Y</span>
-            <input
-              v-model.number="assignForm.y"
-              type="number"
-              class="rounded-lg border border-secondary-700/40 bg-secondary-800/60 px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary"
-            />
-          </label>
-          <label class="flex items-center gap-2 text-sm text-text-secondary">
-            <input type="checkbox" v-model="assignForm.force" />
-            Force override
-          </label>
-          <button
-            type="submit"
-            class="rounded-lg border border-emerald-500/40 bg-emerald-500/70 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
-          >
-            Assign tile
-          </button>
-        </form>
-      </section>
-    </section>
+    <AdminVillagesSection
+      v-else-if="activeSection === 'villages'"
+      ref="villagesSectionRef"
+      :api-base="API_BASE"
+      :active="activeSection === 'villages'"
+      :selected-user-id="selectedUserId"
+      :ensure-admin-access="ensureAdminAccess"
+      :set-error="setError"
+      :set-success="setSuccess"
+      :section-loaded="villagesLoaded"
+      :set-section-loaded="setVillagesLoaded"
+      :troop-catalogue="troops"
+    />
 
     <section
       v-else-if="activeSection === 'troops'"

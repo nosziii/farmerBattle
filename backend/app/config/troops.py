@@ -91,4 +91,20 @@ TROOP_DEFINITIONS: List[TroopDefinition] = [
             "smithy": 3,
         },
     },
+    {
+        "name": "Noble",
+        "attack": 80,
+        "defense": 60,
+        "speed": 15,
+        "carry_capacity": 40,
+        "wood_cost": 1200,
+        "clay_cost": 1500,
+        "iron_cost": 1200,
+        "training_time": 30,
+        "requirements": {
+            "academy": 1,
+            "noble_house": 1,
+            "smithy": 5,
+        },
+    },
 ]
