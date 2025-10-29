@@ -2482,18 +2482,24 @@ def admin_set_village_troops(
     if not updates:
         return get_village_troops(db, village_id)
 
-    troop_records = {
-        troop.id: troop
-        for troop in db.query(schemas.Troop)
-        .filter(schemas.Troop.id.in_(seen))
-        .all()
-    }
+    def _load_troops() -> Dict[int, schemas.Troop]:
+        query = db.query(schemas.Troop)
+        if seen:
+            query = query.filter(schemas.Troop.id.in_(seen))
+        return {troop.id: troop for troop in query.all()}
+
+    troop_records = _load_troops()
     missing = seen.difference(troop_records)
     if missing:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Troop ids not found: {', '.join(str(mid) for mid in sorted(missing))}",
-        )
+        # Sync static troop definitions in case new units were added to the config.
+        create_initial_troops(db)
+        troop_records = _load_troops()
+        missing = seen.difference(troop_records)
+        if missing:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Troop ids not found: {', '.join(str(mid) for mid in sorted(missing))}",
+            )
 
     existing = {
         record.troop_id: record

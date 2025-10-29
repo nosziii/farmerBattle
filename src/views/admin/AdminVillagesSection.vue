@@ -27,6 +27,18 @@ const props = defineProps<{
 const villages = ref<AdminVillageSummary[]>([]);
 const villageDetail = ref<AdminVillageDetail | null>(null);
 const selectedVillageId = ref<number | null>(null);
+const selectedVillageOption = computed({
+  get: () => (selectedVillageId.value ?? '').toString(),
+  set: (value: string) => {
+    if (!value) {
+      selectedVillageId.value = null;
+      return;
+    }
+    const parsed = Number(value);
+    selectedVillageId.value = Number.isNaN(parsed) ? null : parsed;
+  },
+});
+const villageSearch = ref('');
 
 const villageForm = ref({
   name: '',
@@ -71,11 +83,24 @@ const villageTroops = ref<AdminVillageTroop[]>([]);
 const troopAssignments = ref<Record<number, number>>({});
 
 const filteredVillages = computed(() => {
-  if (!props.selectedUserId) {
-    return villages.value;
+  const base = props.selectedUserId
+    ? villages.value.filter((village) => village.user_id === props.selectedUserId)
+    : villages.value;
+  const term = villageSearch.value.trim().toLowerCase();
+  if (!term) {
+    return base;
   }
-  return villages.value.filter((village) => village.user_id === props.selectedUserId);
+  return base.filter((village) => {
+    const nameMatch = village.name.toLowerCase().includes(term);
+    const idMatch = village.id.toString().includes(term);
+    const ownerMatch = village.user_name.toLowerCase().includes(term);
+    return nameMatch || idMatch || ownerMatch;
+  });
 });
+
+const sortedVillages = computed(() =>
+  [...filteredVillages.value].sort((a, b) => a.id - b.id)
+);
 
 const notifyError = (message: string | null) => {
   props.setError(message);
@@ -157,7 +182,7 @@ const fetchVillageTroops = async (villageId: number | null) => {
 };
 
 const selectDefaultVillage = () => {
-  const available = filteredVillages.value;
+  const available = sortedVillages.value;
   if (!available.length) {
     selectedVillageId.value = null;
     villageDetail.value = null;
@@ -306,6 +331,7 @@ watch(
   () => props.selectedUserId,
   () => {
     newVillageForm.value.user_id = props.selectedUserId ?? 0;
+    villageSearch.value = '';
     selectDefaultVillage();
   }
 );
@@ -350,18 +376,50 @@ defineExpose({ reload, ensureLoaded });
   <section v-if="active" class="space-y-6">
     <div class="grid gap-6 lg:grid-cols-2">
       <div class="rounded-2xl border border-secondary-700/40 bg-secondary-900/60 px-6 py-5 space-y-4">
-        <header class="flex items-center justify-between">
-          <h2 class="text-xl font-semibold text-text-primary">Villages</h2>
+        <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 class="text-xl font-semibold text-text-primary">Villages</h2>
+            <p class="text-xs text-text-secondary/70">Search, pick an ID, then fine-tune the settlement.</p>
+          </div>
           <span class="text-xs text-text-secondary/70">{{ villages.length }} total</span>
         </header>
+
+        <div class="flex flex-col gap-2 md:flex-row md:items-center">
+          <input
+            v-model="villageSearch"
+            type="text"
+            placeholder="Search by name, id, or owner"
+            class="flex-1 rounded-lg border border-secondary-700/40 bg-secondary-800/60 px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary"
+          />
+          <select
+            v-model="selectedVillageOption"
+            class="rounded-lg border border-secondary-700/40 bg-secondary-800/60 px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary"
+          >
+            <option value="" disabled>Select village</option>
+            <option
+              v-for="village in sortedVillages"
+              :key="`select-${village.id}`"
+              :value="village.id"
+            >
+              #{{ village.id }} — {{ village.name }}
+            </option>
+          </select>
+        </div>
 
         <div v-if="isListLoading" class="py-10 text-center text-text-secondary">
           Loading villages...
         </div>
 
+        <div
+          v-else-if="sortedVillages.length === 0"
+          class="py-8 text-center text-sm text-text-secondary"
+        >
+          No villages match the current filters.
+        </div>
+
         <div v-else class="space-y-2 max-h-72 overflow-y-auto">
           <button
-            v-for="village in filteredVillages"
+            v-for="village in sortedVillages"
             :key="village.id"
             class="w-full rounded-lg border px-3 py-2 text-left text-sm transition"
             :class="[
