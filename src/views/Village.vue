@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch } from "vue";
+import { ref, onMounted, onUnmounted, computed, watch, nextTick } from "vue";
 
 import ResourceCard from "../components/ResourceCard.vue";
 import BuildingCard from "../components/BuildingCard.vue";
+import FarmScene from "../components/pixi/FarmScene.vue";
+import type { StructureSnapshot as SceneStructureSnapshot } from "../components/pixi/usePixiFarmScene";
 import axios from "axios";
 import { useWebSocket } from "../services/websocket";
 import { ensureAuthReady } from "../services/auth";
@@ -348,6 +350,45 @@ const BUILDING_METADATA: Record<
 
 const RESOURCE_FIELDS = new Set(["wood", "clay", "iron", "gold"]);
 
+const SCENE_STRUCTURE_ORDER = [
+  "town_hall",
+  "warehouse",
+  "barracks",
+  "wood_mill",
+  "clay_pit",
+  "iron_mine",
+  "market",
+  "stable",
+] as const;
+
+const SCENE_STRUCTURE_INDEX = new Map<string, number>(
+  SCENE_STRUCTURE_ORDER.map((name, index) => [name as string, index])
+);
+
+const computeUpgradeProgress = (status: BuildingStatus, nowMs: number) => {
+  if (
+    !status.is_upgrading ||
+    !status.upgrade_duration ||
+    !status.upgrade_end_time
+  ) {
+    return 0;
+  }
+  const endDate = parseServerDate(status.upgrade_end_time);
+  if (!endDate) {
+    return 0;
+  }
+  const totalMs = status.upgrade_duration * 1000;
+  if (!totalMs) {
+    return 0;
+  }
+  const startMs = endDate.getTime() - totalMs;
+  const elapsed = nowMs - startMs;
+  if (elapsed <= 0) {
+    return 0;
+  }
+  return Math.min(1, Math.max(0, elapsed / totalMs));
+};
+
 const buildingCards = computed<BuildingCardView[]>(() =>
   buildingStatuses.value
     .filter((status) =>
@@ -359,15 +400,13 @@ const buildingCards = computed<BuildingCardView[]>(() =>
         : null;
       const durationSeconds = status.upgrade_duration ?? null;
       const totalMs = durationSeconds ? durationSeconds * 1000 : null;
-    const endMs = endDate ? endDate.getTime() : null;
-    const remainingMs =
-      endMs !== null && totalMs !== null
-        ? Math.max(endMs - now.value, 0)
-        : null;
-    const progress =
-      endMs !== null && totalMs !== null && totalMs > 0
-        ? Math.min(100, ((totalMs - (remainingMs ?? 0)) / totalMs) * 100)
-        : 0;
+      const endMs = endDate ? endDate.getTime() : null;
+      const remainingMs =
+        endMs !== null && totalMs !== null
+          ? Math.max(endMs - now.value, 0)
+          : null;
+    const progressRatio = computeUpgradeProgress(status, now.value);
+    const progress = progressRatio * 100;
 
     const metadata = BUILDING_METADATA[status.internal_name] ?? {
       icon: "???",
@@ -406,6 +445,56 @@ const buildingCards = computed<BuildingCardView[]>(() =>
     };
   })
 );
+
+const sceneStructures = computed<SceneStructureSnapshot[]>(() => {
+  const statuses = buildingStatuses.value;
+  if (!statuses.length) {
+    return [];
+  }
+  const nowMs = now.value;
+  return statuses
+    .filter((status) => SCENE_STRUCTURE_INDEX.has(status.internal_name))
+    .map((status) => {
+      const order = SCENE_STRUCTURE_INDEX.get(status.internal_name) ?? 99;
+      return {
+        internalName: status.internal_name,
+        name: status.name,
+        level: status.level,
+        isUpgrading: status.is_upgrading,
+        canUpgrade:
+          status.available &&
+          !status.is_upgrading &&
+          status.level < status.max_level &&
+          !!status.next_cost,
+        progress: computeUpgradeProgress(status, nowMs),
+        order,
+      };
+    })
+    .sort((a, b) => a.order - b.order)
+    .map(({ order, ...rest }) => rest);
+});
+
+const sceneLoading = computed(() => buildingStatuses.value.length === 0);
+
+const highlightedStructureId = ref<string | null>(null);
+let highlightClearHandle: number | null = null;
+
+const handleStructureSelect = (internalName: string) => {
+  highlightedStructureId.value = internalName;
+  if (highlightClearHandle !== null) {
+    window.clearTimeout(highlightClearHandle);
+  }
+  highlightClearHandle = window.setTimeout(() => {
+    highlightedStructureId.value = null;
+    highlightClearHandle = null;
+  }, 4200);
+  nextTick(() => {
+    const target = document.querySelector<HTMLElement>(
+      `[data-building-tile="${internalName}"]`
+    );
+    target?.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
+};
 
 const updateProductionAndCapacitiesFromStatuses = () => {
   const woodStatus = buildingStatuses.value.find(
@@ -738,6 +827,10 @@ onUnmounted(() => {
     detachSocket();
     detachSocket = null;
   }
+  if (highlightClearHandle !== null) {
+    window.clearTimeout(highlightClearHandle);
+    highlightClearHandle = null;
+  }
   offMessage(handleSocketMessage);
 });
 </script>
@@ -759,6 +852,15 @@ onUnmounted(() => {
       </div>
     </header>
 
+    <section class="mb-12">
+      <FarmScene
+        :structures="sceneStructures"
+        :resources="resourceBalances"
+        :loading="sceneLoading"
+        @structure-select="handleStructureSelect"
+      />
+    </section>
+
     <!-- Resources -->
     <section class="mb-12">
       <h3 class="text-2xl font-bold mb-4">{{ t('village.sections.resources') }}</h3>
@@ -775,12 +877,21 @@ onUnmounted(() => {
     <section>
       <h3 class="text-2xl font-bold mb-4">{{ t('village.sections.buildings') }}</h3>
       <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <BuildingCard
+        <div
           v-for="card in buildingCards"
           :key="card.internalName"
-          v-bind="card"
-          @upgrade="handleUpgrade"
-        />
+          :data-building-tile="card.internalName"
+          class="h-full transition-all duration-300"
+          :class="{
+            'ring-2 ring-primary/70 ring-offset-2 ring-offset-background shadow-[0_18px_40px_-24px_rgba(56,189,248,0.45)] scale-[1.02]':
+              highlightedStructureId === card.internalName,
+          }"
+        >
+          <BuildingCard
+            v-bind="card"
+            @upgrade="handleUpgrade"
+          />
+        </div>
       </div>
       <div
         class="mt-6 rounded-2xl border border-secondary/40 bg-surface/70 px-6 py-5 backdrop-blur"
